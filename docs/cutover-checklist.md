@@ -12,8 +12,10 @@ Use this checklist immediately before switching FlutterFlow from the legacy midd
 
 ## Runtime validation
 
+- `GET /ready` returns `200`
 - buffered smoke test returns `reply_text`
 - streaming smoke test emits `metadata`, `token`, and final `done`
+- unauthenticated buffered chat returns `401`
 - Pub/Sub publish succeeds on both buffered and streaming paths
 - worker logs show `worker_event_persisted`
 - Firestore thread doc is created under `agent_threads/{thread_id}`

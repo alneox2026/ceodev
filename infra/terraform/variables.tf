@@ -71,7 +71,7 @@ variable "require_firebase_auth" {
 variable "allowed_origins" {
   description = "Allowed CORS origins for the public gateway."
   type        = list(string)
-  default     = ["*"]
+  default     = []
 }
 
 variable "agent_registry_path" {

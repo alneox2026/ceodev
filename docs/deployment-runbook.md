@@ -28,6 +28,27 @@ docker push us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-persistence
 
 Copy [terraform.tfvars.example](/c:/Users/Admin/Desktop/CEOsystem-dev3/infra/terraform/terraform.tfvars.example) to `terraform.tfvars` and fill in the real image URIs and allowed frontend origins.
 
+## 2a. Configure remote Terraform state
+
+Do not keep production Terraform state only in a Cloud Shell home directory. Use a GCS backend.
+
+1. Create a state bucket once:
+
+```bash
+gcloud storage buckets create gs://ceo-dev123-tfstate \
+  --project=ceo-dev123 \
+  --location=us-central1 \
+  --uniform-bucket-level-access
+```
+
+2. Copy [backend.hcl.example](/c:/Users/Admin/Desktop/CEOsystem-dev3/infra/terraform/backend.hcl.example) to `backend.hcl` and adjust the bucket or prefix if needed.
+
+3. Initialize Terraform with the backend:
+
+```bash
+terraform init -backend-config=backend.hcl -migrate-state
+```
+
 ## 3. Apply infrastructure
 
 Preferred path:
@@ -42,7 +63,7 @@ Preferred path:
 Manual equivalent from [infra/terraform](/c:/Users/Admin/Desktop/CEOsystem-dev3/infra/terraform):
 
 ```bash
-terraform init
+terraform init -backend-config=backend.hcl
 terraform plan
 terraform apply
 ```
@@ -90,11 +111,13 @@ Streaming test:
 
 Confirm all of the following:
 
-1. gateway returns `reply_text` for buffered chat
-2. stream emits `metadata`, `token`, and final `done`
-3. Pub/Sub topic receives events
-4. worker logs show `worker_event_persisted`
-5. Firestore receives:
+1. `GET /ready` returns `200`
+2. gateway returns `reply_text` for buffered chat
+3. stream emits `metadata`, `token`, and final `done`
+4. unauthenticated buffered chat returns `401`
+5. Pub/Sub topic receives events
+6. worker logs show `worker_event_persisted`
+7. Firestore receives:
    - `agent_threads/{thread_id}`
    - `agent_threads/{thread_id}/messages/{turn_id}_user`
    - `agent_threads/{thread_id}/messages/{turn_id}_assistant`

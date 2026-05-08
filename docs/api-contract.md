@@ -1,5 +1,12 @@
 # Middleware V2 API Contract
 
+## Service probes
+
+- `GET /health`
+- `GET /ready`
+
+Use `/ready` as the Cloud Run probe target and operational readiness check.
+
 ## Buffered chat
 
 `POST /v1/agents/{agent_id}/chat`

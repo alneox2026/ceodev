@@ -25,4 +25,36 @@ Status in this repo:
 
 - items 1 through 4 are now implemented in code
 - local unit/integration tests are passing
-- deployment, live smoke testing, and FlutterFlow cutover remain pending
+- live deployment and smoke testing are complete
+- FlutterFlow cutover remains pending
+
+## FlutterFlow endpoint switch
+
+Update the Maxima API configuration in FlutterFlow to point to the new gateway base URL:
+
+```text
+https://ceoagent-gateway-xpsx2h45iq-uc.a.run.app
+```
+
+Use these endpoints:
+
+- buffered: `POST /v1/agents/maxima/chat`
+- streaming: `POST /v1/agents/maxima/chat/stream`
+
+Send the Firebase ID token in the `Authorization` header:
+
+```text
+Authorization: Bearer <firebase_id_token>
+```
+
+Buffered request body:
+
+```json
+{
+  "message": "Hello",
+  "thread_id": "thread-optional",
+  "session_id": "session-optional"
+}
+```
+
+Persist and reuse `thread_id` and `session_id` from the first successful response for follow-up turns.

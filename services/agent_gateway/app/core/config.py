@@ -48,9 +48,7 @@ def get_settings() -> GatewaySettings:
     raw_registry_path = os.getenv("AGENT_REGISTRY_PATH", "config/agents.dev.yaml").strip()
     agent_registry_path = Path(raw_registry_path).resolve()
 
-    allowed_origins = _parse_csv(os.getenv("ALLOWED_ORIGINS", "*"))
-    if not allowed_origins:
-        allowed_origins = ["*"]
+    allowed_origins = _parse_csv(os.getenv("ALLOWED_ORIGINS"))
 
     allowed_headers = _parse_csv(os.getenv("ALLOWED_HEADERS"))
     if not allowed_headers:

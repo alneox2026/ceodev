@@ -8,8 +8,8 @@ from fastapi import APIRouter
 router = APIRouter()
 
 
-@router.get("/healthz")
-async def healthz() -> dict[str, object]:
+@router.get("/health")
+async def health() -> dict[str, object]:
     return {
         "ok": True,
         "service": "agent-gateway",
@@ -17,8 +17,8 @@ async def healthz() -> dict[str, object]:
     }
 
 
-@router.get("/readyz")
-async def readyz() -> dict[str, object]:
+@router.get("/ready")
+async def ready() -> dict[str, object]:
     return {
         "ok": True,
         "service": "agent-gateway",
