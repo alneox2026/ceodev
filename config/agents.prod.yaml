@@ -1,0 +1,9 @@
+agents:
+  maxima:
+    agent_id: maxima
+    resource_name: projects/ceo-dev123/locations/us-central1/reasoningEngines/5776927001067651072
+    region: us-central1
+    streaming_enabled: true
+    persistence_enabled: true
+    auth_policy: firebase
+
