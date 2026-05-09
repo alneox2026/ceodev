@@ -10,6 +10,9 @@ from fastapi import FastAPI
 from services.agent_persistence_worker.app.api.routes_events import router as events_router
 from services.agent_persistence_worker.app.core.config import get_settings
 from services.agent_persistence_worker.app.core.logging import configure_logging
+from services.agent_persistence_worker.app.services.agent_runtime_sessions import (
+    close_agent_runtime_sessions_client,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -33,6 +36,7 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        await close_agent_runtime_sessions_client()
         LOGGER.info(
             "agent_persistence_worker_shutdown",
             extra={"payload": {"event": "agent_persistence_worker_shutdown"}},

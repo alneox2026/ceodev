@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from services.agent_gateway.app.api.routes_chat import router as chat_router
 from services.agent_gateway.app.api.routes_health import router as health_router
 from services.agent_gateway.app.api.routes_stream import router as stream_router
+from services.agent_gateway.app.api.routes_threads import router as threads_router
 from services.agent_gateway.app.core.config import get_settings
 from services.agent_gateway.app.core.errors import register_exception_handlers
 from services.agent_gateway.app.core.logging import configure_logging
@@ -61,4 +62,5 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(chat_router)
 app.include_router(stream_router)
+app.include_router(threads_router)
 register_exception_handlers(app)

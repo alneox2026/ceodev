@@ -2,6 +2,7 @@
 
 EVENT_TYPE_TURN_COMPLETED = "agent.turn.completed"
 EVENT_TYPE_TURN_FAILED = "agent.turn.failed"
+EVENT_TYPE_THREAD_DELETE_REQUESTED = "agent.thread.delete_requested"
 
 SSE_EVENT_METADATA = "metadata"
 SSE_EVENT_TOKEN = "token"
@@ -9,6 +10,14 @@ SSE_EVENT_DONE = "done"
 SSE_EVENT_ERROR = "error"
 
 STATUS_ACTIVE = "active"
+STATUS_ARCHIVED = "archived"
 STATUS_COMPLETED = "completed"
+STATUS_DELETED = "deleted"
 STATUS_FAILED = "failed"
 
+RUNTIME_SESSION_STATUS_ACTIVE = "active"
+RUNTIME_SESSION_STATUS_DELETE_FAILED = "delete_failed"
+RUNTIME_SESSION_STATUS_DELETE_PENDING = "delete_pending"
+RUNTIME_SESSION_STATUS_DELETED = "deleted"
+RUNTIME_SESSION_STATUS_MISSING = "missing"
+RUNTIME_SESSION_STATUS_ROTATED = "rotated"

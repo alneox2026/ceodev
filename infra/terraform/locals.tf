@@ -14,6 +14,7 @@ locals {
     GOOGLE_CLOUD_REGION              = var.region
     AGENT_REGISTRY_PATH              = var.agent_registry_path
     AGENT_TURN_EVENTS_TOPIC          = var.pubsub_topic_name
+    FIRESTORE_THREADS_COLLECTION     = var.firestore_threads_collection
     PUBSUB_PUBLISH_TIMEOUT_SECONDS   = tostring(var.pubsub_publish_timeout_seconds)
     REQUIRE_FIREBASE_AUTH            = tostring(var.require_firebase_auth)
     ALLOWED_ORIGINS                  = join(",", var.allowed_origins)
@@ -28,5 +29,6 @@ locals {
     FIRESTORE_THREADS_COLLECTION       = var.firestore_threads_collection
     FIRESTORE_MESSAGES_SUBCOLLECTION   = var.firestore_messages_subcollection
     FIRESTORE_IDEMPOTENCY_COLLECTION   = var.firestore_idempotency_collection
+    RUNTIME_DELETE_TIMEOUT_SECONDS     = tostring(var.runtime_delete_timeout_seconds)
   }
 }

@@ -34,6 +34,7 @@ class GatewaySettings:
     allowed_headers: list[str]
     log_level: str
     agent_registry_path: Path
+    threads_collection: str
     upstream_connect_timeout_seconds: float
     upstream_read_timeout_seconds: float
 
@@ -66,6 +67,8 @@ def get_settings() -> GatewaySettings:
         allowed_headers=allowed_headers,
         log_level=log_level,
         agent_registry_path=agent_registry_path,
+        threads_collection=os.getenv("FIRESTORE_THREADS_COLLECTION", "agent_threads").strip()
+        or "agent_threads",
         upstream_connect_timeout_seconds=float(os.getenv("UPSTREAM_CONNECT_TIMEOUT_SECONDS", "10")),
         upstream_read_timeout_seconds=float(os.getenv("UPSTREAM_READ_TIMEOUT_SECONDS", "60")),
     )

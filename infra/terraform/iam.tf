@@ -17,11 +17,13 @@ locals {
   gateway_roles = toset([
     "roles/aiplatform.user",
     "roles/cloudtrace.agent",
+    "roles/datastore.user",
     "roles/logging.logWriter",
     "roles/pubsub.publisher",
   ])
 
   worker_roles = toset([
+    "roles/aiplatform.user",
     "roles/cloudtrace.agent",
     "roles/datastore.user",
     "roles/logging.logWriter",

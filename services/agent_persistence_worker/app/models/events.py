@@ -1,6 +1,5 @@
 """Shared event model exports for the worker."""
 
-from common.schemas import TurnCompletedEvent
+from common.schemas import ThreadDeleteRequestedEvent, TurnCompletedEvent
 
-__all__ = ["TurnCompletedEvent"]
-
+__all__ = ["ThreadDeleteRequestedEvent", "TurnCompletedEvent"]

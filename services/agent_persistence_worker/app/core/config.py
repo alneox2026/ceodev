@@ -13,6 +13,7 @@ class WorkerSettings:
     threads_collection: str
     messages_subcollection: str
     idempotency_collection: str
+    runtime_delete_timeout_seconds: float
     log_level: str
 
 
@@ -24,6 +25,6 @@ def get_settings() -> WorkerSettings:
         messages_subcollection=os.getenv("FIRESTORE_MESSAGES_SUBCOLLECTION", "messages").strip() or "messages",
         idempotency_collection=os.getenv("FIRESTORE_IDEMPOTENCY_COLLECTION", "processed_events").strip()
         or "processed_events",
+        runtime_delete_timeout_seconds=float(os.getenv("RUNTIME_DELETE_TIMEOUT_SECONDS", "30")),
         log_level=os.getenv("WORKER_LOG_LEVEL", "INFO").strip().upper() or "INFO",
     )
-

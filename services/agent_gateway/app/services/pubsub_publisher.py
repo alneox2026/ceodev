@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any
 
-from common.schemas import TurnCompletedEvent
+from common.schemas import ThreadDeleteRequestedEvent, TurnCompletedEvent
 from services.agent_gateway.app.core.config import get_settings
 from services.agent_gateway.app.core.errors import ApiError
 
@@ -40,6 +40,36 @@ class PubSubPublisher:
         self._settings = get_settings()
 
     async def publish_turn_completed(self, event: TurnCompletedEvent) -> PublishResult:
+        return await self.publish_event(
+            event,
+            attributes={
+                "event_type": event.event_type,
+                "agent_id": event.agent_id,
+                "thread_id": event.thread_id,
+                "session_id": event.session_id,
+            },
+        )
+
+    async def publish_thread_delete_requested(
+        self,
+        event: ThreadDeleteRequestedEvent,
+    ) -> PublishResult:
+        return await self.publish_event(
+            event,
+            attributes={
+                "event_type": event.event_type,
+                "agent_id": event.agent_id,
+                "thread_id": event.thread_id,
+                "session_id": event.session_id,
+            },
+        )
+
+    async def publish_event(
+        self,
+        event: TurnCompletedEvent | ThreadDeleteRequestedEvent,
+        *,
+        attributes: dict[str, str],
+    ) -> PublishResult:
         publisher_client = self._publisher_client or await asyncio.to_thread(
             _default_publisher_client
         )
@@ -50,10 +80,7 @@ class PubSubPublisher:
             publish_future = publisher_client.publish(
                 topic_path,
                 payload,
-                event_type=event.event_type,
-                agent_id=event.agent_id,
-                thread_id=event.thread_id,
-                session_id=event.session_id,
+                **attributes,
             )
             message_id = await asyncio.to_thread(
                 publish_future.result,

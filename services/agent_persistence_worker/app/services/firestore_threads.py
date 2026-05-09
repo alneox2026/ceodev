@@ -5,7 +5,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from common.constants import STATUS_ACTIVE
+from common.constants import (
+    RUNTIME_SESSION_STATUS_DELETE_FAILED,
+    RUNTIME_SESSION_STATUS_DELETED,
+    STATUS_ACTIVE,
+)
 from common.schemas import TurnCompletedEvent
 from services.agent_persistence_worker.app.core.config import get_settings
 
@@ -66,3 +70,42 @@ class FirestoreThreadsRepository:
         if existing_time is None:
             return True
         return event_time >= existing_time
+
+    def add_delete_completed_to_batch(
+        self,
+        batch: Any,
+        client: Any,
+        *,
+        thread_id: str,
+        completed_at: datetime,
+        error_code: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "runtime_session_status": RUNTIME_SESSION_STATUS_DELETED,
+            "delete_completed_at": completed_at,
+            "updated_at": completed_at,
+            "last_runtime_error_message": None,
+        }
+        payload["last_runtime_error_code"] = error_code
+        batch.set(self.document(client, thread_id), payload, merge=True)
+
+    def add_delete_failed_to_batch(
+        self,
+        batch: Any,
+        client: Any,
+        *,
+        thread_id: str,
+        failed_at: datetime,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+        batch.set(
+            self.document(client, thread_id),
+            {
+                "runtime_session_status": RUNTIME_SESSION_STATUS_DELETE_FAILED,
+                "last_runtime_error_code": error_code,
+                "last_runtime_error_message": error_message,
+                "updated_at": failed_at,
+            },
+            merge=True,
+        )

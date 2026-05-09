@@ -7,7 +7,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from common.constants import EVENT_TYPE_TURN_COMPLETED, STATUS_COMPLETED
+from common.constants import (
+    EVENT_TYPE_THREAD_DELETE_REQUESTED,
+    EVENT_TYPE_TURN_COMPLETED,
+    STATUS_COMPLETED,
+)
 from common.ids import validate_agent_id, validate_session_id, validate_thread_id
 
 
@@ -66,6 +70,31 @@ class ChatResponse(BaseModel):
     reply_text: str
 
 
+class ThreadLifecycleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=200)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("reason")
+    @classmethod
+    def validate_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+
+class ThreadLifecycleResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool = True
+    agent_id: str
+    thread_id: str
+    status: str
+    runtime_session_status: str | None = None
+
+
 class TurnCompletedEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -88,3 +117,39 @@ class TurnCompletedEvent(BaseModel):
     def validate_agent(cls, value: str) -> str:
         return validate_agent_id(value)
 
+
+class ThreadDeleteRequestedEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_type: str = EVENT_TYPE_THREAD_DELETE_REQUESTED
+    event_id: str
+    agent_id: str
+    agent_region: str
+    agent_resource_name: str
+    user_id: str
+    thread_id: str
+    session_id: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    reason: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("agent_id")
+    @classmethod
+    def validate_agent(cls, value: str) -> str:
+        return validate_agent_id(value)
+
+    @field_validator("thread_id")
+    @classmethod
+    def validate_thread(cls, value: str) -> str:
+        validated = validate_thread_id(value)
+        if validated is None:
+            raise ValueError("thread_id is required.")
+        return validated
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session(cls, value: str) -> str:
+        validated = validate_session_id(value)
+        if validated is None:
+            raise ValueError("session_id is required.")
+        return validated

@@ -92,6 +92,12 @@ variable "worker_log_level" {
   default     = "INFO"
 }
 
+variable "runtime_delete_timeout_seconds" {
+  description = "Worker timeout for Agent Runtime session delete operations."
+  type        = number
+  default     = 30
+}
+
 variable "upstream_connect_timeout_seconds" {
   description = "Gateway connect timeout to Agent Runtime."
   type        = number

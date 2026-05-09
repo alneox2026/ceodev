@@ -6,7 +6,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from common.ids import new_event_id
-from common.schemas import AgentConfig, ChatRequest, TurnCompletedEvent
+from common.schemas import (
+    AgentConfig,
+    ChatRequest,
+    ThreadDeleteRequestedEvent,
+    ThreadLifecycleRequest,
+    TurnCompletedEvent,
+)
 from services.agent_gateway.app.services.request_context import RequestContext
 
 
@@ -40,5 +46,34 @@ def build_turn_completed_event(
         assistant_message=assistant_message,
         created_at=datetime.now(timezone.utc),
         usage=usage or {},
+        metadata=metadata,
+    )
+
+
+def build_thread_delete_requested_event(
+    *,
+    request_context: RequestContext,
+    agent_config: AgentConfig,
+    user_id: str,
+    thread_id: str,
+    session_id: str,
+    payload: ThreadLifecycleRequest,
+) -> ThreadDeleteRequestedEvent:
+    metadata: dict[str, Any] = {
+        "request_id": request_context.request_id,
+    }
+    if payload.metadata:
+        metadata["client_metadata"] = payload.metadata
+
+    return ThreadDeleteRequestedEvent(
+        event_id=new_event_id(),
+        agent_id=agent_config.agent_id,
+        agent_region=agent_config.region,
+        agent_resource_name=agent_config.resource_name,
+        user_id=user_id,
+        thread_id=thread_id,
+        session_id=session_id,
+        created_at=datetime.now(timezone.utc),
+        reason=payload.reason,
         metadata=metadata,
     )
