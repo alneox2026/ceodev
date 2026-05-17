@@ -72,6 +72,13 @@ variable "allowed_origins" {
   description = "Allowed CORS origins for the public gateway."
   type        = list(string)
   default     = []
+
+  validation {
+    condition = alltrue([
+      for origin in var.allowed_origins : trimspace(origin) != "*"
+    ])
+    error_message = "Wildcard CORS origins are not allowed. Provide explicit web origins instead."
+  }
 }
 
 variable "agent_registry_path" {
@@ -164,6 +171,18 @@ variable "gateway_timeout" {
   default     = "120s"
 }
 
+variable "cloud_run_execution_environment" {
+  description = "Pinned Cloud Run execution environment for both services."
+  type        = string
+  default     = "EXECUTION_ENVIRONMENT_GEN2"
+}
+
+variable "cloud_run_request_based_billing" {
+  description = "Whether Cloud Run CPU should be allocated only during requests."
+  type        = bool
+  default     = true
+}
+
 variable "worker_min_instances" {
   description = "Minimum number of worker instances."
   type        = number
@@ -198,4 +217,16 @@ variable "worker_timeout" {
   description = "Worker request timeout."
   type        = string
   default     = "120s"
+}
+
+variable "alert_notification_channels" {
+  description = "Cloud Monitoring notification channel resource names for alert policies."
+  type        = list(string)
+  default     = []
+}
+
+variable "gateway_p95_latency_threshold_ms" {
+  description = "Gateway p95 latency threshold in milliseconds for launch alerting."
+  type        = number
+  default     = 8000
 }

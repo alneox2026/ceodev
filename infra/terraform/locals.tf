@@ -4,6 +4,8 @@ locals {
     "artifactregistry.googleapis.com",
     "eventarc.googleapis.com",
     "firestore.googleapis.com",
+    "logging.googleapis.com",
+    "monitoring.googleapis.com",
     "pubsub.googleapis.com",
     "run.googleapis.com",
     "secretmanager.googleapis.com",

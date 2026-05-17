@@ -8,6 +8,7 @@ resource "google_cloud_run_v2_service" "gateway" {
     service_account                  = google_service_account.gateway.email
     timeout                          = var.gateway_timeout
     max_instance_request_concurrency = var.gateway_concurrency
+    execution_environment            = var.cloud_run_execution_environment
 
     scaling {
       min_instance_count = var.gateway_min_instances
@@ -26,6 +27,7 @@ resource "google_cloud_run_v2_service" "gateway" {
           cpu    = var.gateway_cpu
           memory = var.gateway_memory
         }
+        cpu_idle = var.cloud_run_request_based_billing
       }
 
       dynamic "env" {

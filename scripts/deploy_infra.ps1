@@ -7,7 +7,8 @@ param(
 
     [string]$ProjectId = "ceo-dev123",
     [string]$Region = "us-central1",
-    [string[]]$AllowedOrigins = @("*"),
+    [string[]]$AllowedOrigins = @("https://ceoappdev.flutterflow.app"),
+    [string[]]$AlertNotificationChannels = @(),
     [switch]$PlanOnly
 )
 
@@ -24,20 +25,27 @@ Require-Command terraform
 
 $terraformDir = Join-Path $PSScriptRoot "..\\infra\\terraform"
 $varsPath = Join-Path $terraformDir "terraform.auto.tfvars.json"
+$backendConfigPath = Join-Path $terraformDir "backend.hcl"
 
 $payload = @{
-    project_id      = $ProjectId
-    region          = $Region
-    gateway_image   = $GatewayImage
-    worker_image    = $WorkerImage
-    allowed_origins = $AllowedOrigins
+    project_id                  = $ProjectId
+    region                      = $Region
+    gateway_image               = $GatewayImage
+    worker_image                = $WorkerImage
+    allowed_origins             = $AllowedOrigins
+    alert_notification_channels = $AlertNotificationChannels
 }
 
 $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $varsPath -Encoding UTF8
 
 Push-Location $terraformDir
 try {
-    terraform init
+    if (Test-Path -LiteralPath $backendConfigPath) {
+        terraform init -backend-config=backend.hcl -reconfigure
+    }
+    else {
+        terraform init
+    }
     terraform plan
     if (-not $PlanOnly) {
         terraform apply -auto-approve

@@ -2,16 +2,17 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$AuthToken,
 
-    [Parameter(Mandatory = $true)]
-    [string[]]$AllowedOrigins,
+    [string[]]$AllowedOrigins = @("https://ceoappdev.flutterflow.app"),
 
     [string]$ProjectId = "ceo-dev123",
     [string]$Region = "us-central1",
     [string]$Repository = "ceosystem",
     [string]$Tag = "latest",
     [string]$SmokeMessage = "Hello from the new Maxima gateway",
+    [string[]]$AlertNotificationChannels = @(),
     [switch]$SkipBuild,
-    [switch]$SkipApply
+    [switch]$SkipApply,
+    [switch]$IncludeStreamingSmoke
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +42,7 @@ else {
     -ProjectId $ProjectId `
     -Region $Region `
     -AllowedOrigins $AllowedOrigins `
+    -AlertNotificationChannels $AlertNotificationChannels `
     -PlanOnly:$SkipApply
 
 if ($SkipApply) {
@@ -62,9 +64,11 @@ Write-Host "Running buffered smoke test against $gatewayUrl"
     -AuthToken $AuthToken `
     -Message $SmokeMessage
 
-Write-Host "Running streaming smoke test against $gatewayUrl"
-& $smokeScript `
-    -ServiceUrl $gatewayUrl `
-    -AuthToken $AuthToken `
-    -Message $SmokeMessage `
-    -Stream
+if ($IncludeStreamingSmoke) {
+    Write-Host "Running streaming smoke test against $gatewayUrl"
+    & $smokeScript `
+        -ServiceUrl $gatewayUrl `
+        -AuthToken $AuthToken `
+        -Message $SmokeMessage `
+        -Stream
+}

@@ -40,6 +40,11 @@ Success response target shape:
 
 `POST /v1/agents/{agent_id}/chat/stream`
 
+Launch posture for Maxima:
+
+- keep this endpoint deployed and validated server-side
+- do not wire it into FlutterFlow until after the buffered launch is stable
+
 SSE event names:
 - `metadata`
 - `token`

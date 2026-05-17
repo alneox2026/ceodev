@@ -1,11 +1,21 @@
 output "gateway_url" {
-  value       = google_cloud_run_v2_service.gateway.uri
-  description = "Public URL for the gateway service."
+  value       = "https://${var.gateway_service_name}-${data.google_project.current.number}.${var.region}.run.app"
+  description = "Deterministic public URL for the gateway service."
 }
 
 output "worker_url" {
+  value       = "https://${var.worker_service_name}-${data.google_project.current.number}.${var.region}.run.app"
+  description = "Deterministic authenticated URL for the persistence worker."
+}
+
+output "gateway_service_uri" {
+  value       = google_cloud_run_v2_service.gateway.uri
+  description = "Cloud Run reported URI for the gateway service."
+}
+
+output "worker_service_uri" {
   value       = google_cloud_run_v2_service.worker.uri
-  description = "Authenticated URL for the persistence worker."
+  description = "Cloud Run reported URI for the persistence worker."
 }
 
 output "gateway_service_account_email" {
@@ -31,4 +41,19 @@ output "agent_turn_events_topic" {
 output "eventarc_trigger_name" {
   value       = google_eventarc_trigger.worker_turn_events.name
   description = "Eventarc trigger name for worker delivery."
+}
+
+output "gateway_5xx_alert_policy_name" {
+  value       = google_monitoring_alert_policy.gateway_5xx.name
+  description = "Cloud Monitoring alert policy for gateway 5xx responses."
+}
+
+output "gateway_latency_alert_policy_name" {
+  value       = google_monitoring_alert_policy.gateway_latency.name
+  description = "Cloud Monitoring alert policy for elevated gateway p95 latency."
+}
+
+output "worker_retry_alert_policy_name" {
+  value       = google_monitoring_alert_policy.worker_retryable_failures.name
+  description = "Cloud Monitoring alert policy for worker retryable failures."
 }

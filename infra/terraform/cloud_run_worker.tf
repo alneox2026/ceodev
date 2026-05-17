@@ -8,6 +8,7 @@ resource "google_cloud_run_v2_service" "worker" {
     service_account                  = google_service_account.worker.email
     timeout                          = var.worker_timeout
     max_instance_request_concurrency = var.worker_concurrency
+    execution_environment            = var.cloud_run_execution_environment
 
     scaling {
       min_instance_count = var.worker_min_instances
@@ -26,6 +27,7 @@ resource "google_cloud_run_v2_service" "worker" {
           cpu    = var.worker_cpu
           memory = var.worker_memory
         }
+        cpu_idle = var.cloud_run_request_based_billing
       }
 
       dynamic "env" {

@@ -26,7 +26,17 @@ docker push us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-persistence
 
 ## 2. Prepare Terraform variables
 
-Copy [terraform.tfvars.example](/c:/Users/Admin/Desktop/CEOsystem-dev3/infra/terraform/terraform.tfvars.example) to `terraform.tfvars` and fill in the real image URIs and allowed frontend origins.
+Copy [terraform.tfvars.example](/c:/Users/Admin/Desktop/CEOsystem-dev3/infra/terraform/terraform.tfvars.example) to `terraform.tfvars` and fill in the real image URIs.
+
+Launch defaults for this repo:
+
+- `allowed_origins = ["https://ceoappdev.flutterflow.app"]`
+- request-based billing for both Cloud Run services
+- second-generation execution environment for both Cloud Run services
+- gateway `min_instances = 1`
+- worker `min_instances = 0`
+
+Optionally add `alert_notification_channels` if you already have Cloud Monitoring notification channel resource names configured.
 
 ## 2a. Configure remote Terraform state
 
@@ -57,13 +67,13 @@ Preferred path:
 .\scripts\deploy_infra.ps1 `
   -GatewayImage "us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-gateway:latest" `
   -WorkerImage "us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-persistence-worker:latest" `
-  -AllowedOrigins "https://your-flutterflow-domain.example"
+  -AllowedOrigins "https://ceoappdev.flutterflow.app"
 ```
 
 Manual equivalent from [infra/terraform](/c:/Users/Admin/Desktop/CEOsystem-dev3/infra/terraform):
 
 ```bash
-terraform init -backend-config=backend.hcl
+terraform init -backend-config=backend.hcl -reconfigure
 terraform plan
 terraform apply
 ```
@@ -75,6 +85,17 @@ This Terraform stack creates:
 - service accounts with least-privilege runtime roles
 - the `agent-turn-events` Pub/Sub topic
 - the Eventarc trigger that invokes the worker on `/events/pubsub`
+- Cloud Monitoring alert policies for:
+  - gateway 5xx responses
+  - elevated gateway p95 latency
+  - worker retryable failures
+
+After apply, record the deterministic service URLs from Terraform outputs:
+
+- `gateway_url`
+- `worker_url`
+
+Use `gateway_url` as the canonical FlutterFlow base URL.
 
 ## 4. Smoke test the gateway
 
@@ -85,8 +106,10 @@ Full rollout helper:
 ```powershell
 .\scripts\rollout_maxima.ps1 `
   -AuthToken "FIREBASE_ID_TOKEN" `
-  -AllowedOrigins "https://your-flutterflow-domain.example"
+  -AllowedOrigins "https://ceoappdev.flutterflow.app"
 ```
+
+By default, `rollout_maxima.ps1` now runs the buffered smoke path only. Add `-IncludeStreamingSmoke` only when you are explicitly validating the SSE endpoint.
 
 Buffered test:
 
@@ -113,30 +136,48 @@ Confirm all of the following:
 
 1. `GET /ready` returns `200`
 2. gateway returns `reply_text` for buffered chat
-3. stream emits `metadata`, `token`, and final `done`
-4. unauthenticated buffered chat returns `401`
-5. Pub/Sub topic receives events
-6. worker logs show `worker_event_persisted`
-7. Firestore receives:
+3. unauthenticated buffered chat returns `401`
+4. Pub/Sub topic receives events
+5. worker logs show `worker_event_persisted`
+6. Firestore receives:
    - `agent_threads/{thread_id}`
    - `agent_threads/{thread_id}/messages/{turn_id}_user`
    - `agent_threads/{thread_id}/messages/{turn_id}_assistant`
+7. archive action returns `status = "archived"`
+8. delete action returns `status = "deleted"` and worker logs show `worker_thread_delete_processed`
+9. Cloud Run Error Reporting remains empty for both services during the verification window
+
+Optional backend regression:
+
+- run a streaming smoke test and confirm `metadata`, `token`, and final `done`
 
 ## 6. Cutover rule
 
 Do not switch FlutterFlow to the new gateway until:
 
 1. buffered smoke test passes
-2. streaming smoke test passes
-3. worker persistence is visible in Firestore
-4. duplicate delivery test confirms no duplicate messages
+2. worker persistence is visible in Firestore
+3. duplicate delivery test confirms no duplicate messages
+4. archive/delete lifecycle is validated end-to-end
 5. rollback path to the legacy `main.py` service remains available
 
-## 7. Script inventory
+For the Maxima launch, keep FlutterFlow on the buffered endpoint only:
+
+- `POST /v1/agents/maxima/chat`
+- `POST /v1/agents/maxima/threads/{thread_id}/archive`
+- `POST /v1/agents/maxima/threads/{thread_id}/delete`
+
+Do not wire the streaming endpoint into FlutterFlow until the buffered launch has a stable production window.
+
+## 7. Rollback
+
+Use the one-page runbook: [maxima-rollback-runbook.md](/c:/Users/Admin/Desktop/CEOsystem-dev3/docs/maxima-rollback-runbook.md)
+
+## 8. Script inventory
 
 - [build_images.ps1](/c:/Users/Admin/Desktop/CEOsystem-dev3/scripts/build_images.ps1): build and push both container images
 - [deploy_infra.ps1](/c:/Users/Admin/Desktop/CEOsystem-dev3/scripts/deploy_infra.ps1): write Terraform vars, run `init`, `plan`, and optionally `apply`
-- [rollout_maxima.ps1](/c:/Users/Admin/Desktop/CEOsystem-dev3/scripts/rollout_maxima.ps1): build, deploy, fetch gateway URL, and run buffered/stream smoke tests
+- [rollout_maxima.ps1](/c:/Users/Admin/Desktop/CEOsystem-dev3/scripts/rollout_maxima.ps1): build, deploy, fetch the deterministic gateway URL, and run buffered smoke tests (streaming optional)
 - [smoke_gateway.ps1](/c:/Users/Admin/Desktop/CEOsystem-dev3/scripts/smoke_gateway.ps1): direct buffered or stream call against an existing gateway URL
 
 ## Sources
