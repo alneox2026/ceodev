@@ -21,6 +21,7 @@ locals {
     REQUIRE_FIREBASE_AUTH            = tostring(var.require_firebase_auth)
     ALLOWED_ORIGINS                  = join(",", var.allowed_origins)
     GATEWAY_LOG_LEVEL                = var.gateway_log_level
+    GATEWAY_STREAM_DEBUG             = tostring(var.gateway_stream_debug)
     UPSTREAM_CONNECT_TIMEOUT_SECONDS = tostring(var.upstream_connect_timeout_seconds)
     UPSTREAM_READ_TIMEOUT_SECONDS    = tostring(var.upstream_read_timeout_seconds)
   }

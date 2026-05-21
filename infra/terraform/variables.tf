@@ -93,6 +93,12 @@ variable "gateway_log_level" {
   default     = "INFO"
 }
 
+variable "gateway_stream_debug" {
+  description = "Whether to emit one-shot upstream stream diagnostics from the gateway."
+  type        = bool
+  default     = false
+}
+
 variable "worker_log_level" {
   description = "Worker application log level."
   type        = string

@@ -35,6 +35,12 @@ class BufferedAgentResponse:
     raw_events: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class UpstreamStreamEvent:
+    event_name: str | None
+    payload: dict[str, Any]
+
+
 class AgentRuntimeClient:
     def __init__(
         self,
@@ -96,14 +102,14 @@ class AgentRuntimeClient:
     ) -> BufferedAgentResponse:
         raw_events: list[dict[str, Any]] = []
         text_fragments: list[str] = []
-        async for event in self.stream_chat_events(
+        async for upstream_event in self.stream_chat_events(
             agent_config=agent_config,
             user_id=user_id,
             session_id=session_id,
             message=message,
         ):
-            raw_events.append(event)
-            text_fragments.extend(self._extract_text_fragments(event))
+            raw_events.append(upstream_event.payload)
+            text_fragments.extend(self._extract_text_fragments(upstream_event.payload))
 
         return BufferedAgentResponse(
             reply_text="".join(text_fragments).strip(),
@@ -137,13 +143,13 @@ class AgentRuntimeClient:
             ) as response:
                 if response.status_code >= 400:
                     raise await self._stream_error(response)
-                async for _, data in self._iter_sse_messages(response):
+                async for event_name, data in self._iter_sse_messages(response):
                     if not data or data == "[DONE]":
                         continue
                     parsed = self._try_parse_json(data)
                     if parsed is None:
                         continue
-                    yield parsed
+                    yield UpstreamStreamEvent(event_name=event_name, payload=parsed)
         except ApiError:
             raise
         except httpx.RequestError as exc:

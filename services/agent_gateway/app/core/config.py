@@ -37,6 +37,7 @@ class GatewaySettings:
     threads_collection: str
     upstream_connect_timeout_seconds: float
     upstream_read_timeout_seconds: float
+    stream_debug: bool
 
 
 @lru_cache(maxsize=1)
@@ -71,4 +72,5 @@ def get_settings() -> GatewaySettings:
         or "agent_threads",
         upstream_connect_timeout_seconds=float(os.getenv("UPSTREAM_CONNECT_TIMEOUT_SECONDS", "10")),
         upstream_read_timeout_seconds=float(os.getenv("UPSTREAM_READ_TIMEOUT_SECONDS", "60")),
+        stream_debug=_parse_bool(os.getenv("GATEWAY_STREAM_DEBUG"), default=False),
     )

@@ -3,6 +3,7 @@ region          = "us-central1"
 gateway_image   = "us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-gateway:latest"
 worker_image    = "us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-persistence-worker:latest"
 allowed_origins = ["https://ceoappdev.flutterflow.app"]
+gateway_stream_debug = false
 
 # Optional: add Cloud Monitoring notification channel resource names for launch alerts.
 alert_notification_channels = []
