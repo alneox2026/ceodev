@@ -19,9 +19,9 @@ import vertexai
 from dotenv import load_dotenv
 from google.adk.artifacts import GcsArtifactService, InMemoryArtifactService
 from google.cloud import logging as google_cloud_logging
-from vertexai.agent_engines.templates.adk import AdkApp
 
 from app.agent import app as adk_app
+from app.app_utils.streaming_runtime import StreamingDefaultAdkApp
 from app.app_utils.telemetry import setup_telemetry
 from app.app_utils.typing import Feedback
 
@@ -29,7 +29,7 @@ from app.app_utils.typing import Feedback
 load_dotenv()
 
 
-class AgentEngineApp(AdkApp):
+class AgentEngineApp(StreamingDefaultAdkApp):
     def set_up(self) -> None:
         """Initialize the agent engine app with logging and telemetry."""
         vertexai.init()

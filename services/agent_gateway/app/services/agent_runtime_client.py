@@ -132,8 +132,8 @@ class AgentRuntimeClient:
                 "user_id": user_id,
                 "session_id": session_id,
                 "message": message,
+                "run_config": STREAM_RUN_CONFIG,
             },
-            "run_config": STREAM_RUN_CONFIG,
         }
 
         try:

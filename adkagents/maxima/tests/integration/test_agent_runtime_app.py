@@ -12,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import logging
+from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 from google.adk.events.event import Event
+from vertexai.agent_engines.templates.adk import AdkApp
 
 from app.agent_runtime_app import AgentEngineApp
 
@@ -87,3 +91,84 @@ def test_agent_feedback(agent_app: AgentEngineApp) -> None:
         agent_app.register_feedback(invalid_feedback)
 
     logging.info("All assertions passed for agent feedback test")
+
+
+def test_async_stream_query_defaults_to_sse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_run_config: dict[str, Any] = {}
+
+    async def fake_async_stream_query(
+        self,
+        *,
+        message: str | dict[str, Any],
+        user_id: str,
+        session_id: str | None = None,
+        session_events: list[dict[str, Any]] | None = None,
+        run_config: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> AsyncIterator[dict[str, Any]]:
+        del self, message, user_id, session_id, session_events, kwargs
+        captured_run_config.update(run_config or {})
+        yield {"content": {"role": "model", "parts": [{"text": "chunk"}]}}
+
+    monkeypatch.setattr(AdkApp, "async_stream_query", fake_async_stream_query)
+
+    from app.agent_runtime_app import agent_runtime
+
+    async def _run() -> None:
+        events = []
+        async for event in agent_runtime.async_stream_query(
+            message="hello",
+            user_id="test-user",
+        ):
+            events.append(event)
+        assert len(events) == 1
+
+    asyncio.run(_run())
+
+    assert captured_run_config["streaming_mode"] == "sse"
+
+
+def test_async_stream_query_preserves_explicit_run_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_run_config: dict[str, Any] = {}
+
+    async def fake_async_stream_query(
+        self,
+        *,
+        message: str | dict[str, Any],
+        user_id: str,
+        session_id: str | None = None,
+        session_events: list[dict[str, Any]] | None = None,
+        run_config: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> AsyncIterator[dict[str, Any]]:
+        del self, message, user_id, session_id, session_events, kwargs
+        captured_run_config.update(run_config or {})
+        yield {"content": {"role": "model", "parts": [{"text": "chunk"}]}}
+
+    monkeypatch.setattr(AdkApp, "async_stream_query", fake_async_stream_query)
+
+    from app.agent_runtime_app import agent_runtime
+
+    explicit_run_config = {
+        "streaming_mode": "none",
+        "max_llm_calls": 12,
+        "custom_metadata": {"origin": "test"},
+    }
+
+    async def _run() -> None:
+        events = []
+        async for event in agent_runtime.async_stream_query(
+            message="hello",
+            user_id="test-user",
+            run_config=explicit_run_config,
+        ):
+            events.append(event)
+        assert len(events) == 1
+
+    asyncio.run(_run())
+
+    assert captured_run_config == explicit_run_config

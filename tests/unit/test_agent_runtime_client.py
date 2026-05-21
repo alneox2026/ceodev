@@ -87,8 +87,8 @@ def test_stream_chat_events_requests_sse_run_config() -> None:
                 "user_id": "user-1",
                 "session_id": "session-1",
                 "message": "hello",
+                "run_config": STREAM_RUN_CONFIG,
             },
-            "run_config": STREAM_RUN_CONFIG,
         }
 
     asyncio.run(_run())
