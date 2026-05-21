@@ -18,6 +18,7 @@ from services.agent_gateway.app.core.errors import ApiError
 
 
 AUTH_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
+STREAM_RUN_CONFIG = {"streaming_mode": "sse"}
 
 _client_singleton: "AgentRuntimeClient | None" = None
 _client_lock = asyncio.Lock()
@@ -132,6 +133,7 @@ class AgentRuntimeClient:
                 "session_id": session_id,
                 "message": message,
             },
+            "run_config": STREAM_RUN_CONFIG,
         }
 
         try:
