@@ -162,6 +162,46 @@ def test_stream_chat_logs_fragment_counters_for_multiple_text_events(monkeypatch
     assert completion_log["first_token_latency_ms"] is not None
 
 
+def test_stream_chat_emits_only_new_suffix_for_cumulative_partials(monkeypatch) -> None:
+    upstream_events = [
+        UpstreamStreamEvent(
+            event_name="message_start",
+            payload={
+                "content": {
+                    "role": "model",
+                    "parts": [{"text": "echo:"}],
+                }
+            },
+        ),
+        UpstreamStreamEvent(
+            event_name="message_delta",
+            payload={
+                "content": {
+                    "role": "model",
+                    "parts": [{"text": "echo:hello"}],
+                },
+                "usage_metadata": {"total_token_count": 12},
+            },
+        ),
+    ]
+
+    monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    monkeypatch.setattr(
+        routes_stream,
+        "get_agent_runtime_client",
+        _make_runtime_client(upstream_events=upstream_events),
+    )
+    monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
+
+    response = client.post("/v1/agents/maxima/chat/stream", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert response.text.count("event: token") == 2
+    assert 'data: {"text": "echo:"}' in response.text
+    assert 'data: {"text": "hello"}' in response.text
+    assert '"reply_text": "echo:hello"' in response.text
+
+
 def test_stream_chat_debug_log_captures_upstream_shape_without_text(monkeypatch) -> None:
     log_calls: list[dict[str, object]] = []
     upstream_events = [

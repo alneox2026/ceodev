@@ -186,9 +186,11 @@ async def stream_chat(
                     include_debug_shape=settings.stream_debug,
                 )
                 for fragment in fragments:
-                    assembler.add_text(fragment)
+                    emitted_fragment = assembler.add_text(fragment)
+                    if not emitted_fragment:
+                        continue
                     diagnostics.record_emitted_token()
-                    yield build_token_event(fragment)
+                    yield build_token_event(emitted_fragment)
 
             publish_result = None
             publish_latency_ms = 0
@@ -230,6 +232,7 @@ async def stream_chat(
                 pubsub_message_id=publish_result.message_id if publish_result else None,
                 publish_latency_ms=publish_latency_ms,
                 latency_ms=latency_ms,
+                outcome="completed",
                 **diagnostics.completion_fields(assembler.reply_text()),
             )
             _emit_stream_debug_log(

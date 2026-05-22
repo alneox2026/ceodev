@@ -15,6 +15,7 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 from common.ids import new_thread_id
 from common.schemas import AgentConfig, ChatRequest
 from services.agent_gateway.app.core.errors import ApiError
+from services.agent_gateway.app.services.turn_assembler import TurnAssembler
 
 
 AUTH_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
@@ -102,7 +103,7 @@ class AgentRuntimeClient:
         message: str,
     ) -> BufferedAgentResponse:
         raw_events: list[dict[str, Any]] = []
-        text_fragments: list[str] = []
+        assembler = TurnAssembler()
         async for upstream_event in self.stream_chat_events(
             agent_config=agent_config,
             user_id=user_id,
@@ -110,10 +111,11 @@ class AgentRuntimeClient:
             message=message,
         ):
             raw_events.append(upstream_event.payload)
-            text_fragments.extend(self._extract_text_fragments(upstream_event.payload))
+            for fragment in self._extract_text_fragments(upstream_event.payload):
+                assembler.add_text(fragment)
 
         return BufferedAgentResponse(
-            reply_text="".join(text_fragments).strip(),
+            reply_text=assembler.reply_text(),
             raw_events=raw_events,
         )
 
@@ -148,10 +150,8 @@ class AgentRuntimeClient:
                 async for event_name, data in self._iter_sse_messages(response):
                     if not data or data == "[DONE]":
                         continue
-                    parsed = self._try_parse_json(data)
-                    if parsed is None:
-                        continue
-                    yield UpstreamStreamEvent(event_name=event_name, payload=parsed)
+                    for parsed in self._parse_json_messages(data):
+                        yield UpstreamStreamEvent(event_name=event_name, payload=parsed)
         except ApiError:
             raise
         except httpx.RequestError as exc:
@@ -256,25 +256,26 @@ class AgentRuntimeClient:
         if data_lines:
             yield event_name, "\n".join(data_lines)
 
-    def _try_parse_json(self, data: str) -> dict[str, Any] | None:
+    def _parse_json_messages(self, data: str) -> list[dict[str, Any]]:
         try:
             parsed = json.loads(data)
         except json.JSONDecodeError:
+            parsed_messages: list[dict[str, Any]] = []
             for line in data.splitlines():
                 stripped = line.strip()
                 if not stripped or stripped == "[DONE]":
                     continue
                 try:
                     parsed = json.loads(stripped)
-                    break
                 except json.JSONDecodeError:
                     continue
-            else:
-                return None
+                if isinstance(parsed, dict):
+                    parsed_messages.append(parsed)
+            return parsed_messages
 
         if isinstance(parsed, dict):
-            return parsed
-        return None
+            return [parsed]
+        return []
 
     def _extract_text_fragments(self, event_payload: dict[str, Any]) -> list[str]:
         fragments: list[str] = []
