@@ -54,6 +54,13 @@ class DeleteThreadService:
         self,
         event: ThreadDeleteRequestedEvent,
     ) -> DeleteThreadResult:
+        duplicate_result = await asyncio.to_thread(
+            self._processed_duplicate_result_sync,
+            event,
+        )
+        if duplicate_result is not None:
+            return duplicate_result
+
         runtime_client = await self.runtime_sessions_client_factory()
         try:
             outcome = await self._delete_runtime_session(runtime_client, event)
@@ -66,6 +73,19 @@ class DeleteThreadService:
             )
             raise
         return await asyncio.to_thread(self._persist_outcome_sync, event, outcome)
+
+    def _processed_duplicate_result_sync(
+        self,
+        event: ThreadDeleteRequestedEvent,
+    ) -> DeleteThreadResult | None:
+        client = self.firestore_client_factory()
+        if not self.idempotency_store.exists(client, event.event_id):
+            return None
+        return DeleteThreadResult(
+            event_id=event.event_id,
+            thread_id=event.thread_id,
+            runtime_session_status=RUNTIME_SESSION_STATUS_DELETED,
+        )
 
     async def _delete_runtime_session(
         self,

@@ -15,6 +15,9 @@ class IdempotencyStore:
     def document(self, client: Any, event_id: str):
         return client.collection(self._settings.idempotency_collection).document(event_id)
 
+    def exists(self, client: Any, event_id: str) -> bool:
+        return bool(self.document(client, event_id).get().exists)
+
     def add_create_to_batch(
         self,
         batch: Any,

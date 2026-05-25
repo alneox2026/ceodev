@@ -35,8 +35,15 @@ class FakeIdempotencyStore:
 
 
 class FakeThreadsRepository:
+    def __init__(self, existing_thread=None, ignored_reason=None) -> None:
+        self.existing_thread = existing_thread
+        self.ignored_reason = ignored_reason
+
     def load_existing(self, client, thread_id):
-        return None
+        return self.existing_thread
+
+    def validate_existing_for_turn(self, existing_thread, event):
+        return self.ignored_reason
 
     def add_upsert_to_batch(self, batch, client, event, *, existing_thread=None) -> None:
         batch.actions.append(("thread", event.thread_id))
@@ -91,3 +98,19 @@ def test_persist_turn_treats_conflict_as_duplicate() -> None:
     result = asyncio.run(service.persist(_build_event()))
 
     assert result.persisted is False
+
+
+def test_persist_turn_records_idempotency_only_for_deleted_thread() -> None:
+    client = FakeClient()
+    service = PersistTurnService(
+        idempotency_store=FakeIdempotencyStore(),
+        threads_repository=FakeThreadsRepository(ignored_reason="thread_deleted"),
+        messages_repository=FakeMessagesRepository(),
+        firestore_client_factory=lambda: client,
+    )
+
+    result = asyncio.run(service.persist(_build_event()))
+
+    assert result.persisted is False
+    assert result.ignored_reason == "thread_deleted"
+    assert client.batch_instance.actions == [("idempotency", "evt-1")]

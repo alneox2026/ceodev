@@ -25,6 +25,7 @@ class PersistTurnResult:
     event_id: str
     thread_id: str
     persisted: bool
+    ignored_reason: str | None = None
 
 
 class PersistTurnService:
@@ -54,6 +55,16 @@ class PersistTurnService:
                 client,
                 event.thread_id,
             )
+            ignored_reason = self.threads_repository.validate_existing_for_turn(
+                existing_thread,
+                event,
+            )
+            if ignored_reason:
+                return self._persist_idempotency_only(
+                    client,
+                    event,
+                    ignored_reason=ignored_reason,
+                )
             batch = client.batch()
             self.idempotency_store.add_create_to_batch(batch, client, event)
             self.threads_repository.add_upsert_to_batch(
@@ -83,6 +94,35 @@ class PersistTurnService:
             event_id=event.event_id,
             thread_id=event.thread_id,
             persisted=True,
+        )
+
+    def _persist_idempotency_only(
+        self,
+        client: Any,
+        event: TurnCompletedEvent,
+        *,
+        ignored_reason: str,
+    ) -> PersistTurnResult:
+        batch = client.batch()
+        self.idempotency_store.add_create_to_batch(batch, client, event)
+        try:
+            batch.commit()
+        except Exception as exc:
+            if self._is_conflict_error(exc):
+                return PersistTurnResult(
+                    event_id=event.event_id,
+                    thread_id=event.thread_id,
+                    persisted=False,
+                    ignored_reason=ignored_reason,
+                )
+            raise RetryableWorkerError(
+                f"Failed to record ignored turn event {event.event_id}: {exc}"
+            ) from exc
+        return PersistTurnResult(
+            event_id=event.event_id,
+            thread_id=event.thread_id,
+            persisted=False,
+            ignored_reason=ignored_reason,
         )
 
     def _is_conflict_error(self, exc: Exception) -> bool:

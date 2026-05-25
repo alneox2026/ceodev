@@ -120,7 +120,7 @@ variable "upstream_connect_timeout_seconds" {
 variable "upstream_read_timeout_seconds" {
   description = "Gateway read timeout to Agent Runtime."
   type        = number
-  default     = 60
+  default     = 240
 }
 
 variable "firestore_threads_collection" {
@@ -174,7 +174,7 @@ variable "gateway_memory" {
 variable "gateway_timeout" {
   description = "Gateway request timeout."
   type        = string
-  default     = "120s"
+  default     = "300s"
 }
 
 variable "cloud_run_execution_environment" {
@@ -223,6 +223,24 @@ variable "worker_timeout" {
   description = "Worker request timeout."
   type        = string
   default     = "120s"
+}
+
+variable "worker_require_eventarc_auth" {
+  description = "Whether the worker verifies Eventarc OIDC tokens in application code."
+  type        = bool
+  default     = false
+}
+
+variable "worker_eventarc_allowed_service_account" {
+  description = "Expected Eventarc service account email for worker push requests. Defaults to the Terraform-managed Eventarc service account when empty."
+  type        = string
+  default     = ""
+}
+
+variable "worker_eventarc_audience" {
+  description = "Expected OIDC audience for worker push requests when application-level Eventarc auth is enabled."
+  type        = string
+  default     = ""
 }
 
 variable "alert_notification_channels" {

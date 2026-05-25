@@ -15,6 +15,15 @@ class WorkerSettings:
     idempotency_collection: str
     runtime_delete_timeout_seconds: float
     log_level: str
+    eventarc_auth_required: bool
+    eventarc_allowed_service_account: str
+    eventarc_audience: str
+
+
+def _parse_bool(value: str | None, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 @lru_cache(maxsize=1)
@@ -27,4 +36,13 @@ def get_settings() -> WorkerSettings:
         or "processed_events",
         runtime_delete_timeout_seconds=float(os.getenv("RUNTIME_DELETE_TIMEOUT_SECONDS", "30")),
         log_level=os.getenv("WORKER_LOG_LEVEL", "INFO").strip().upper() or "INFO",
+        eventarc_auth_required=_parse_bool(
+            os.getenv("WORKER_REQUIRE_EVENTARC_AUTH"),
+            default=False,
+        ),
+        eventarc_allowed_service_account=os.getenv(
+            "WORKER_EVENTARC_ALLOWED_SERVICE_ACCOUNT",
+            "",
+        ).strip(),
+        eventarc_audience=os.getenv("WORKER_EVENTARC_AUDIENCE", "").strip(),
     )

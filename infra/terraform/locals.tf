@@ -27,11 +27,14 @@ locals {
   }
 
   worker_env = {
-    GOOGLE_CLOUD_PROJECT               = var.project_id
-    WORKER_LOG_LEVEL                   = var.worker_log_level
-    FIRESTORE_THREADS_COLLECTION       = var.firestore_threads_collection
-    FIRESTORE_MESSAGES_SUBCOLLECTION   = var.firestore_messages_subcollection
-    FIRESTORE_IDEMPOTENCY_COLLECTION   = var.firestore_idempotency_collection
-    RUNTIME_DELETE_TIMEOUT_SECONDS     = tostring(var.runtime_delete_timeout_seconds)
+    GOOGLE_CLOUD_PROJECT                    = var.project_id
+    WORKER_LOG_LEVEL                        = var.worker_log_level
+    FIRESTORE_THREADS_COLLECTION            = var.firestore_threads_collection
+    FIRESTORE_MESSAGES_SUBCOLLECTION        = var.firestore_messages_subcollection
+    FIRESTORE_IDEMPOTENCY_COLLECTION        = var.firestore_idempotency_collection
+    RUNTIME_DELETE_TIMEOUT_SECONDS          = tostring(var.runtime_delete_timeout_seconds)
+    WORKER_REQUIRE_EVENTARC_AUTH            = tostring(var.worker_require_eventarc_auth)
+    WORKER_EVENTARC_ALLOWED_SERVICE_ACCOUNT = var.worker_eventarc_allowed_service_account != "" ? var.worker_eventarc_allowed_service_account : google_service_account.eventarc.email
+    WORKER_EVENTARC_AUDIENCE                = var.worker_eventarc_audience
   }
 }

@@ -38,6 +38,8 @@ def validate_thread_id(thread_id: str | None) -> str | None:
         return None
     if len(cleaned) > 128:
         raise ValueError("thread_id must be 128 characters or fewer.")
+    if "/" in cleaned:
+        raise ValueError("thread_id must not contain '/'.")
     return cleaned
 
 
@@ -49,5 +51,6 @@ def validate_session_id(session_id: str | None) -> str | None:
         return None
     if len(cleaned) > 256:
         raise ValueError("session_id must be 256 characters or fewer.")
+    if "/" in cleaned:
+        raise ValueError("session_id must not contain '/'.")
     return cleaned
-

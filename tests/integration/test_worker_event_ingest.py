@@ -16,6 +16,7 @@ async def _fake_persist(event):
         event_id=event.event_id,
         thread_id=event.thread_id,
         persisted=True,
+        ignored_reason=None,
     )
 
 

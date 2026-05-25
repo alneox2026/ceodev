@@ -9,6 +9,7 @@ from common.constants import (
     SSE_EVENT_DONE,
     SSE_EVENT_ERROR,
     SSE_EVENT_METADATA,
+    SSE_EVENT_STATUS,
     SSE_EVENT_TOKEN,
 )
 
@@ -19,6 +20,10 @@ def format_sse(event_name: str, payload: dict[str, Any]) -> str:
 
 def build_metadata_event(payload: dict[str, Any]) -> str:
     return format_sse(SSE_EVENT_METADATA, payload)
+
+
+def build_status_event(payload: dict[str, Any]) -> str:
+    return format_sse(SSE_EVENT_STATUS, payload)
 
 
 def build_token_event(text: str) -> str:

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi import HTTPException
 
 from common.constants import EVENT_TYPE_THREAD_DELETE_REQUESTED, EVENT_TYPE_TURN_COMPLETED
+from services.agent_persistence_worker.app.core.auth import verify_eventarc_request
 from services.agent_persistence_worker.app.core.logging import log_structured
 from services.agent_persistence_worker.app.core.errors import RetryableWorkerError
 from services.agent_persistence_worker.app.models.events import (
@@ -26,7 +27,11 @@ DELETE_THREAD_SERVICE = DeleteThreadService()
 
 
 @router.post("/events/pubsub")
-async def receive_pubsub_event(envelope: PubSubPushEnvelope) -> dict[str, object]:
+async def receive_pubsub_event(
+    request: Request,
+    envelope: PubSubPushEnvelope,
+) -> dict[str, object]:
+    await verify_eventarc_request(request)
     try:
         decoded_payload = envelope.message.decode_json()
         event_type = str(decoded_payload.get("event_type", "")).strip()
@@ -70,19 +75,38 @@ async def _handle_turn_completed(decoded_payload: dict[str, object]) -> dict[str
             detail=f"Retryable persistence failure: {exc}",
         ) from exc
 
-    log_structured(
-        LOGGER,
-        logging.INFO,
-        "worker_event_persisted",
-        event_id=result.event_id,
-        thread_id=result.thread_id,
-        persisted=result.persisted,
-    )
+    if result.ignored_reason:
+        event_name = (
+            "worker_event_integrity_rejected"
+            if result.ignored_reason
+            in {"uid_mismatch", "agent_id_mismatch", "session_id_mismatch"}
+            else "worker_event_ignored"
+        )
+        log_level = logging.ERROR if event_name == "worker_event_integrity_rejected" else logging.WARNING
+        log_structured(
+            LOGGER,
+            log_level,
+            event_name,
+            event_id=result.event_id,
+            thread_id=result.thread_id,
+            persisted=result.persisted,
+            ignored_reason=result.ignored_reason,
+        )
+    else:
+        log_structured(
+            LOGGER,
+            logging.INFO,
+            "worker_event_persisted",
+            event_id=result.event_id,
+            thread_id=result.thread_id,
+            persisted=result.persisted,
+        )
     return {
         "ok": True,
         "event_id": result.event_id,
         "thread_id": result.thread_id,
         "persisted": result.persisted,
+        "ignored_reason": result.ignored_reason,
     }
 
 

@@ -5,6 +5,7 @@ EVENT_TYPE_TURN_FAILED = "agent.turn.failed"
 EVENT_TYPE_THREAD_DELETE_REQUESTED = "agent.thread.delete_requested"
 
 SSE_EVENT_METADATA = "metadata"
+SSE_EVENT_STATUS = "status"
 SSE_EVENT_TOKEN = "token"
 SSE_EVENT_DONE = "done"
 SSE_EVENT_ERROR = "error"

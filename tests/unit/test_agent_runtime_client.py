@@ -3,10 +3,17 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
+import httpx
+import pytest
+
 from common.schemas import AgentConfig
+from services.agent_gateway.app.core.config import get_settings
+from services.agent_gateway.app.core.errors import ApiError
 from services.agent_gateway.app.services.agent_runtime_client import (
     AgentRuntimeClient,
     STREAM_RUN_CONFIG,
+    close_agent_runtime_client,
+    get_agent_runtime_client,
 )
 
 
@@ -54,29 +61,161 @@ class _RecordingAsyncClient:
         return None
 
 
+class _FailingStreamResponse:
+    def __init__(self, exc: httpx.RequestError, *, raise_on_enter: bool) -> None:
+        self._exc = exc
+        self._raise_on_enter = raise_on_enter
+
+    status_code = 200
+
+    async def __aenter__(self) -> "_FailingStreamResponse":
+        if self._raise_on_enter:
+            raise self._exc
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+    async def aiter_lines(self) -> AsyncIterator[str]:
+        raise self._exc
+        yield ""  # pragma: no cover
+
+    async def aread(self) -> bytes:
+        return b""
+
+
+class _FailingAsyncClient:
+    def __init__(self, exc: httpx.RequestError, *, raise_on_enter: bool) -> None:
+        self._exc = exc
+        self._raise_on_enter = raise_on_enter
+
+    def stream(self, method: str, url: str, headers=None, json=None):
+        return _FailingStreamResponse(self._exc, raise_on_enter=self._raise_on_enter)
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def _fake_authorized_headers() -> dict[str, str]:
+    return {
+        "Authorization": "Bearer test-token",
+        "Content-Type": "application/json",
+    }
+
+
+def _agent_config() -> AgentConfig:
+    return AgentConfig(
+        agent_id="maxima",
+        resource_name="projects/test/locations/us-central1/reasoningEngines/123",
+        region="us-central1",
+    )
+
+
+async def _collect_stream(runtime_client: AgentRuntimeClient) -> None:
+    runtime_client._authorized_headers = _fake_authorized_headers  # type: ignore[method-assign]
+    async for _ in runtime_client.stream_chat_events(
+        agent_config=_agent_config(),
+        user_id="user-1",
+        session_id="session-1",
+        message="hello",
+    ):
+        pass
+
+
+def test_get_agent_runtime_client_uses_configured_timeouts(monkeypatch) -> None:
+    async def _run() -> None:
+        await close_agent_runtime_client()
+        get_settings.cache_clear()
+        monkeypatch.setenv("UPSTREAM_CONNECT_TIMEOUT_SECONDS", "3")
+        monkeypatch.setenv("UPSTREAM_READ_TIMEOUT_SECONDS", "123")
+
+        runtime_client = await get_agent_runtime_client()
+
+        assert runtime_client.connect_timeout_seconds == 3
+        assert runtime_client.read_timeout_seconds == 123
+
+        await close_agent_runtime_client()
+        get_settings.cache_clear()
+
+    asyncio.run(_run())
+
+
+def test_stream_chat_events_maps_connect_timeout() -> None:
+    async def _run() -> None:
+        request = httpx.Request("POST", "https://example.test")
+        runtime_client = AgentRuntimeClient(
+            connect_timeout_seconds=7,
+            read_timeout_seconds=99,
+            http_client=_FailingAsyncClient(
+                httpx.ConnectTimeout("connect timed out", request=request),
+                raise_on_enter=True,
+            ),
+        )
+
+        with pytest.raises(ApiError) as exc_info:
+            await _collect_stream(runtime_client)
+
+        assert exc_info.value.status_code == 504
+        assert exc_info.value.code == "agent_runtime_stream_connect_timeout"
+        assert exc_info.value.details["timeout_type"] == "connect"
+        assert exc_info.value.details["timeout_seconds"] == 7
+
+    asyncio.run(_run())
+
+
+def test_stream_chat_events_maps_read_timeout() -> None:
+    async def _run() -> None:
+        request = httpx.Request("POST", "https://example.test")
+        runtime_client = AgentRuntimeClient(
+            connect_timeout_seconds=7,
+            read_timeout_seconds=99,
+            http_client=_FailingAsyncClient(
+                httpx.ReadTimeout("read timed out", request=request),
+                raise_on_enter=False,
+            ),
+        )
+
+        with pytest.raises(ApiError) as exc_info:
+            await _collect_stream(runtime_client)
+
+        assert exc_info.value.status_code == 504
+        assert exc_info.value.code == "agent_runtime_stream_read_timeout"
+        assert exc_info.value.details["timeout_type"] == "read"
+        assert exc_info.value.details["timeout_seconds"] == 99
+
+    asyncio.run(_run())
+
+
+def test_stream_chat_events_maps_generic_request_error() -> None:
+    async def _run() -> None:
+        request = httpx.Request("POST", "https://example.test")
+        runtime_client = AgentRuntimeClient(
+            http_client=_FailingAsyncClient(
+                httpx.ConnectError("network unavailable", request=request),
+                raise_on_enter=True,
+            ),
+        )
+
+        with pytest.raises(ApiError) as exc_info:
+            await _collect_stream(runtime_client)
+
+        assert exc_info.value.status_code == 502
+        assert exc_info.value.code == "agent_runtime_stream_unreachable"
+
+    asyncio.run(_run())
+
+
 def test_stream_chat_events_requests_sse_run_config() -> None:
     async def _run() -> None:
         http_client = _RecordingAsyncClient()
         runtime_client = AgentRuntimeClient(http_client=http_client)
 
-        async def _fake_authorized_headers() -> dict[str, str]:
-            return {
-                "Authorization": "Bearer test-token",
-                "Content-Type": "application/json",
-            }
-
         runtime_client._authorized_headers = _fake_authorized_headers  # type: ignore[method-assign]
-
-        agent_config = AgentConfig(
-            agent_id="maxima",
-            resource_name="projects/test/locations/us-central1/reasoningEngines/123",
-            region="us-central1",
-        )
 
         events = [
             event
             async for event in runtime_client.stream_chat_events(
-                agent_config=agent_config,
+                agent_config=_agent_config(),
                 user_id="user-1",
                 session_id="session-1",
                 message="hello",
@@ -115,24 +254,12 @@ def test_stream_chat_events_parses_multiple_json_objects_from_one_sse_message() 
         )
         runtime_client = AgentRuntimeClient(http_client=http_client)
 
-        async def _fake_authorized_headers() -> dict[str, str]:
-            return {
-                "Authorization": "Bearer test-token",
-                "Content-Type": "application/json",
-            }
-
         runtime_client._authorized_headers = _fake_authorized_headers  # type: ignore[method-assign]
-
-        agent_config = AgentConfig(
-            agent_id="maxima",
-            resource_name="projects/test/locations/us-central1/reasoningEngines/123",
-            region="us-central1",
-        )
 
         events = [
             event
             async for event in runtime_client.stream_chat_events(
-                agent_config=agent_config,
+                agent_config=_agent_config(),
                 user_id="user-1",
                 session_id="session-1",
                 message="hello",
@@ -161,22 +288,10 @@ def test_buffered_chat_reassembles_cumulative_fragments() -> None:
         )
         runtime_client = AgentRuntimeClient(http_client=http_client)
 
-        async def _fake_authorized_headers() -> dict[str, str]:
-            return {
-                "Authorization": "Bearer test-token",
-                "Content-Type": "application/json",
-            }
-
         runtime_client._authorized_headers = _fake_authorized_headers  # type: ignore[method-assign]
 
-        agent_config = AgentConfig(
-            agent_id="maxima",
-            resource_name="projects/test/locations/us-central1/reasoningEngines/123",
-            region="us-central1",
-        )
-
         response = await runtime_client.chat(
-            agent_config=agent_config,
+            agent_config=_agent_config(),
             user_id="user-1",
             session_id="session-1",
             message="hello",

@@ -37,7 +37,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=20000)
     thread_id: str | None = None
     session_id: str | None = None
-    client_turn_id: str | None = None
+    client_turn_id: str | None = Field(default=None, max_length=128)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("message")
@@ -57,6 +57,18 @@ class ChatRequest(BaseModel):
     @classmethod
     def validate_session(cls, value: str | None) -> str | None:
         return validate_session_id(value)
+
+    @field_validator("client_turn_id")
+    @classmethod
+    def validate_client_turn_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if "/" in cleaned:
+            raise ValueError("client_turn_id must not contain '/'.")
+        return cleaned
 
 
 class ChatResponse(BaseModel):

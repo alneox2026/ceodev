@@ -14,6 +14,7 @@ from services.agent_gateway.app.services.agent_registry import get_agent_config
 from services.agent_gateway.app.services.agent_runtime_client import (
     get_agent_runtime_client,
 )
+from services.agent_gateway.app.services.chat_session_service import get_chat_session_service
 from services.agent_gateway.app.services.pubsub_publisher import get_pubsub_publisher
 from services.agent_gateway.app.services.request_context import build_request_context
 from services.agent_gateway.app.services.turn_event_builder import (
@@ -34,6 +35,7 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
     )
     user_id = await authenticate_request(request)
     runtime_client = await get_agent_runtime_client()
+    session_service = await get_chat_session_service()
     log_structured(
         LOGGER,
         logging.INFO,
@@ -43,7 +45,8 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
         agent_id=agent_config.agent_id,
         user_id=user_id,
     )
-    session_result = await runtime_client.ensure_session(
+    session_result = await session_service.resolve(
+        runtime_client=runtime_client,
         agent_config=agent_config,
         user_id=user_id,
         request=payload,
@@ -90,6 +93,7 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
         agent_id=agent_config.agent_id,
         thread_id=session_result.thread_id,
         session_id=session_result.session_id,
+        session_created=session_result.created_new,
         pubsub_message_id=publish_result.message_id if publish_result else None,
         publish_latency_ms=publish_latency_ms,
         latency_ms=latency_ms,

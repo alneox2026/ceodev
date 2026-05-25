@@ -8,6 +8,7 @@ from typing import Any
 from common.constants import (
     RUNTIME_SESSION_STATUS_DELETE_PENDING,
     RUNTIME_SESSION_STATUS_DELETED,
+    STATUS_ACTIVE,
     STATUS_ARCHIVED,
     STATUS_DELETED,
 )
@@ -57,6 +58,52 @@ class ThreadRepository:
                 "thread_not_found",
                 "The requested thread does not exist for this agent.",
                 {"thread_id": thread_id, "agent_id": agent_id},
+            )
+        return thread
+
+    def assert_active_owned_thread(
+        self,
+        client: Any,
+        *,
+        thread_id: str,
+        user_id: str,
+        agent_id: str,
+    ) -> dict[str, Any]:
+        thread = self.assert_owned_thread(
+            client,
+            thread_id=thread_id,
+            user_id=user_id,
+            agent_id=agent_id,
+        )
+        status = str(thread.get("status", "")).strip() or STATUS_ACTIVE
+        if status == STATUS_ARCHIVED:
+            raise ApiError(
+                409,
+                "thread_archived",
+                "Archived threads are read-only and cannot receive new chat turns.",
+                {"thread_id": thread_id},
+            )
+        if status == STATUS_DELETED:
+            raise ApiError(
+                409,
+                "thread_deleted",
+                "Deleted threads cannot be reopened.",
+                {"thread_id": thread_id},
+            )
+        if status != STATUS_ACTIVE:
+            raise ApiError(
+                409,
+                "thread_not_active",
+                "Only active threads can receive new chat turns.",
+                {"thread_id": thread_id, "status": status},
+            )
+        session_id = str(thread.get("session_id", "")).strip()
+        if not session_id:
+            raise ApiError(
+                409,
+                "thread_missing_session_id",
+                "The requested thread does not have an Agent Runtime session.",
+                {"thread_id": thread_id},
             )
         return thread
 

@@ -9,9 +9,14 @@ from common.constants import (
     RUNTIME_SESSION_STATUS_DELETE_FAILED,
     RUNTIME_SESSION_STATUS_DELETED,
     STATUS_ACTIVE,
+    STATUS_ARCHIVED,
+    STATUS_DELETED,
 )
 from common.schemas import TurnCompletedEvent
 from services.agent_persistence_worker.app.core.config import get_settings
+
+THREAD_TITLE_MAX_CHARS = 120
+THREAD_PREVIEW_MAX_CHARS = 280
 
 
 class FirestoreThreadsRepository:
@@ -36,15 +41,18 @@ class FirestoreThreadsRepository:
         existing_thread: dict[str, Any] | None = None,
     ) -> None:
         document = self.document(client, event.thread_id)
+        existing_status = ""
+        if existing_thread:
+            existing_status = str(existing_thread.get("status", "")).strip()
         payload: dict[str, Any] = {
             "uid": event.user_id,
             "agent_id": event.agent_id,
             "thread_id": event.thread_id,
-            "status": STATUS_ACTIVE,
+            "status": existing_status or STATUS_ACTIVE,
         }
         if not existing_thread:
             payload["created_at"] = event.created_at
-            payload["title"] = event.user_message[:120]
+            payload["title"] = self._preview(event.user_message, THREAD_TITLE_MAX_CHARS)
 
         if self._should_update_summary(existing_thread, event.created_at):
             payload.update(
@@ -52,12 +60,43 @@ class FirestoreThreadsRepository:
                     "session_id": event.session_id,
                     "updated_at": event.created_at,
                     "last_message_at": event.created_at,
-                    "last_user_message": event.user_message,
-                    "last_assistant_message": event.assistant_message,
+                    "last_user_message": self._preview(event.user_message),
+                    "last_assistant_message": self._preview(event.assistant_message),
                 }
             )
 
         batch.set(document, payload, merge=True)
+
+    def _preview(self, value: str, limit: int = THREAD_PREVIEW_MAX_CHARS) -> str:
+        normalized = " ".join(value.split())
+        if len(normalized) <= limit:
+            return normalized
+        return f"{normalized[: limit - 3]}..."
+
+    def validate_existing_for_turn(
+        self,
+        existing_thread: dict[str, Any] | None,
+        event: TurnCompletedEvent,
+    ) -> str | None:
+        if not existing_thread:
+            return None
+
+        existing_uid = str(existing_thread.get("uid", "")).strip()
+        existing_agent_id = str(existing_thread.get("agent_id", "")).strip()
+        existing_session_id = str(existing_thread.get("session_id", "")).strip()
+        existing_status = str(existing_thread.get("status", "")).strip()
+
+        if existing_uid and existing_uid != event.user_id:
+            return "uid_mismatch"
+        if existing_agent_id and existing_agent_id != event.agent_id:
+            return "agent_id_mismatch"
+        if existing_session_id and existing_session_id != event.session_id:
+            return "session_id_mismatch"
+        if existing_status == STATUS_DELETED:
+            return "thread_deleted"
+        if existing_status not in {"", STATUS_ACTIVE, STATUS_ARCHIVED}:
+            return "unsupported_thread_status"
+        return None
 
     def _should_update_summary(
         self,

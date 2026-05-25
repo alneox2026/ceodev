@@ -8,6 +8,7 @@ import logging
 from fastapi import FastAPI
 
 from services.agent_persistence_worker.app.api.routes_events import router as events_router
+from services.agent_persistence_worker.app.api.routes_health import router as health_router
 from services.agent_persistence_worker.app.core.config import get_settings
 from services.agent_persistence_worker.app.core.logging import configure_logging
 from services.agent_persistence_worker.app.services.agent_runtime_sessions import (
@@ -48,4 +49,5 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.include_router(health_router)
 app.include_router(events_router)

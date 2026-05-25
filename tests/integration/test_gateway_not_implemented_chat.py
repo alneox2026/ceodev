@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -5,6 +6,7 @@ from fastapi.testclient import TestClient
 from services.agent_gateway.app.main import app
 from services.agent_gateway.app.api import routes_chat
 from services.agent_gateway.app.api import routes_stream
+from services.agent_gateway.app.core.errors import ApiError
 from services.agent_gateway.app.services.agent_runtime_client import UpstreamStreamEvent
 
 
@@ -12,7 +14,13 @@ client = TestClient(app)
 
 
 class FakeAgentRuntimeClient:
-    def __init__(self, upstream_events=None):
+    def __init__(
+        self,
+        upstream_events=None,
+        delay_seconds=0.0,
+        stream_error=None,
+        fallback_reply_text=None,
+    ):
         self._upstream_events = upstream_events or [
             UpstreamStreamEvent(
                 event_name="message",
@@ -25,6 +33,9 @@ class FakeAgentRuntimeClient:
                 },
             )
         ]
+        self._delay_seconds = delay_seconds
+        self._stream_error = stream_error
+        self._fallback_reply_text = fallback_reply_text
 
     async def ensure_session(self, *, agent_config, user_id, request):
         return SimpleNamespace(
@@ -38,8 +49,30 @@ class FakeAgentRuntimeClient:
             raw_events=[],
         )
 
+    async def chat_buffered_query(self, *, agent_config, user_id, session_id, message):
+        if self._fallback_reply_text is None:
+            raise ApiError(502, "fallback_unavailable", "Fallback unavailable.")
+        return SimpleNamespace(
+            reply_text=self._fallback_reply_text,
+            raw_events=[
+                {
+                    "content": {
+                        "role": "model",
+                        "parts": [{"text": self._fallback_reply_text}],
+                    }
+                }
+            ],
+        )
+
     async def stream_chat_events(self, *, agent_config, user_id, session_id, message):
+        if self._stream_error is not None:
+            if self._delay_seconds:
+                await asyncio.sleep(self._delay_seconds)
+            raise self._stream_error
+
         for upstream_event in self._upstream_events:
+            if self._delay_seconds:
+                await asyncio.sleep(self._delay_seconds)
             yield upstream_event
 
     def extract_text_fragments(self, event):
@@ -64,9 +97,19 @@ async def _fake_get_pubsub_publisher() -> FakePublisher:
     return FakePublisher()
 
 
-def _make_runtime_client(upstream_events=None):
+def _make_runtime_client(
+    upstream_events=None,
+    delay_seconds=0.0,
+    stream_error=None,
+    fallback_reply_text=None,
+):
     async def _fake_runtime_client():
-        return FakeAgentRuntimeClient(upstream_events=upstream_events)
+        return FakeAgentRuntimeClient(
+            upstream_events=upstream_events,
+            delay_seconds=delay_seconds,
+            stream_error=stream_error,
+            fallback_reply_text=fallback_reply_text,
+        )
 
     return _fake_runtime_client
 
@@ -107,6 +150,160 @@ def test_stream_chat_returns_normalized_sse_contract(monkeypatch) -> None:
     assert "event: done" in response.text
     assert '"reply_text": "echo:hello"' in response.text
     assert '"pubsub_message_id": "msg-fake"' in response.text
+
+
+def test_stream_chat_emits_status_while_waiting_for_upstream(monkeypatch) -> None:
+    upstream_events = [
+        UpstreamStreamEvent(
+            event_name="message",
+            payload={
+                "content": {
+                    "role": "model",
+                    "parts": [{"text": "echo:hello"}],
+                }
+            },
+        )
+    ]
+
+    monkeypatch.setattr(routes_stream, "STREAM_STATUS_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    monkeypatch.setattr(
+        routes_stream,
+        "get_agent_runtime_client",
+        _make_runtime_client(
+            upstream_events=upstream_events,
+            delay_seconds=0.08,
+        ),
+    )
+    monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
+
+    response = client.post("/v1/agents/maxima/chat/stream", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert response.text.count("event: status") >= 2
+    assert response.text.index("event: metadata") < response.text.index("event: status")
+    assert response.text.index("event: status") < response.text.index("event: token")
+    assert '"phase": "waiting_for_agent_runtime"' in response.text
+    assert '"reply_text": "echo:hello"' in response.text
+
+
+def test_stream_chat_emits_status_error_and_done_on_upstream_read_timeout(monkeypatch) -> None:
+    log_calls: list[dict[str, object]] = []
+    stream_error = ApiError(
+        504,
+        "agent_runtime_stream_read_timeout",
+        "The gateway timed out while waiting for Agent Runtime to send stream data.",
+        {
+            "timeout_type": "read",
+            "timeout_seconds": 240,
+            "reason": "read timed out",
+        },
+    )
+
+    def _capture_log(_logger, _level, event, **fields):
+        log_calls.append({"event": event, **fields})
+
+    monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    monkeypatch.setattr(
+        routes_stream,
+        "get_agent_runtime_client",
+        _make_runtime_client(stream_error=stream_error),
+    )
+    monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
+    monkeypatch.setattr(routes_stream, "log_structured", _capture_log)
+    monkeypatch.setattr(
+        routes_stream,
+        "get_settings",
+        lambda: SimpleNamespace(
+            stream_debug=False,
+            upstream_connect_timeout_seconds=10,
+            upstream_read_timeout_seconds=240,
+        ),
+    )
+
+    response = client.post("/v1/agents/maxima/chat/stream", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert "event: metadata" in response.text
+    assert "event: status" in response.text
+    assert "event: error" in response.text
+    assert "event: done" in response.text
+    assert '"code": "agent_runtime_stream_read_timeout"' in response.text
+    assert '"ok": false' in response.text
+
+    failure_log = next(
+        call for call in log_calls if call["event"] == "gateway_stream_failed"
+    )
+    assert failure_log["code"] == "agent_runtime_stream_read_timeout"
+    assert failure_log["timeout_type"] == "read"
+    assert failure_log["upstream_read_timeout_seconds"] == 240
+    assert failure_log["upstream_elapsed_ms"] is not None
+
+
+def test_stream_chat_falls_back_to_buffered_before_any_token(monkeypatch) -> None:
+    stream_error = ApiError(
+        504,
+        "agent_runtime_stream_read_timeout",
+        "The gateway timed out while waiting for Agent Runtime to send stream data.",
+        {"timeout_type": "read", "timeout_seconds": 240},
+    )
+
+    monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    monkeypatch.setattr(
+        routes_stream,
+        "get_agent_runtime_client",
+        _make_runtime_client(
+            stream_error=stream_error,
+            fallback_reply_text="fallback response",
+        ),
+    )
+    monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
+
+    response = client.post("/v1/agents/maxima/chat/stream", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert "event: error" not in response.text
+    assert 'data: {"text": "fallback response"}' in response.text
+    assert '"fallback": true' in response.text
+    assert '"fallback_from_code": "agent_runtime_stream_read_timeout"' in response.text
+
+
+def test_stream_chat_does_not_fallback_after_token(monkeypatch) -> None:
+    stream_error = ApiError(
+        502,
+        "agent_runtime_stream_unreachable",
+        "The gateway could not open a streaming connection to Agent Runtime.",
+    )
+
+    class TokenThenErrorClient(FakeAgentRuntimeClient):
+        async def stream_chat_events(self, *, agent_config, user_id, session_id, message):
+            yield UpstreamStreamEvent(
+                event_name="message",
+                payload={
+                    "content": {
+                        "role": "model",
+                        "parts": [{"text": "partial"}],
+                    }
+                },
+            )
+            raise stream_error
+
+        async def chat_buffered_query(self, *, agent_config, user_id, session_id, message):
+            raise AssertionError("fallback must not run after a token was emitted")
+
+    async def _runtime_client():
+        return TokenThenErrorClient()
+
+    monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    monkeypatch.setattr(routes_stream, "get_agent_runtime_client", _runtime_client)
+    monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
+
+    response = client.post("/v1/agents/maxima/chat/stream", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert 'data: {"text": "partial"}' in response.text
+    assert "event: error" in response.text
+    assert '"ok": false' in response.text
 
 
 def test_stream_chat_logs_fragment_counters_for_multiple_text_events(monkeypatch) -> None:

@@ -20,6 +20,7 @@ from services.agent_gateway.app.services.turn_assembler import TurnAssembler
 
 AUTH_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
 STREAM_RUN_CONFIG = {"streaming_mode": "sse"}
+BUFFERED_RUN_CONFIG = {"streaming_mode": "none"}
 
 _client_singleton: "AgentRuntimeClient | None" = None
 _client_lock = asyncio.Lock()
@@ -51,6 +52,8 @@ class AgentRuntimeClient:
         read_timeout_seconds: float = 60.0,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
+        self.connect_timeout_seconds = connect_timeout_seconds
+        self.read_timeout_seconds = read_timeout_seconds
         self._http_client = http_client or httpx.AsyncClient(
             timeout=httpx.Timeout(
                 connect=connect_timeout_seconds,
@@ -72,9 +75,13 @@ class AgentRuntimeClient:
         user_id: str,
         request: ChatRequest,
     ) -> SessionResult:
-        thread_id = request.thread_id or new_thread_id()
-        if request.session_id:
-            return SessionResult(session_id=request.session_id, thread_id=thread_id)
+        if request.thread_id or request.session_id:
+            raise ApiError(
+                500,
+                "invalid_session_resolution_state",
+                "Existing thread sessions must be resolved before reaching Agent Runtime.",
+            )
+        thread_id = new_thread_id()
 
         response_payload = await self._post_json(
             url=self._build_query_url(agent_config),
@@ -119,6 +126,38 @@ class AgentRuntimeClient:
             raw_events=raw_events,
         )
 
+    async def chat_buffered_query(
+        self,
+        *,
+        agent_config: AgentConfig,
+        user_id: str,
+        session_id: str,
+        message: str,
+    ) -> BufferedAgentResponse:
+        response_payload = await self._post_json(
+            url=self._build_query_url(agent_config),
+            payload={
+                "class_method": "async_stream_query",
+                "input": {
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "message": message,
+                    "run_config": BUFFERED_RUN_CONFIG,
+                },
+            },
+        )
+        raw_events = self._extract_event_payloads(response_payload)
+        assembler = TurnAssembler()
+        for event in raw_events:
+            assembler.add_event(event)
+            for fragment in self._extract_text_fragments(event):
+                assembler.add_text(fragment)
+
+        return BufferedAgentResponse(
+            reply_text=assembler.reply_text(),
+            raw_events=raw_events,
+        )
+
     async def stream_chat_events(
         self,
         *,
@@ -154,6 +193,28 @@ class AgentRuntimeClient:
                         yield UpstreamStreamEvent(event_name=event_name, payload=parsed)
         except ApiError:
             raise
+        except httpx.ConnectTimeout as exc:
+            raise ApiError(
+                504,
+                "agent_runtime_stream_connect_timeout",
+                "The gateway timed out while opening a streaming connection to Agent Runtime.",
+                {
+                    "reason": str(exc),
+                    "timeout_seconds": self.connect_timeout_seconds,
+                    "timeout_type": "connect",
+                },
+            ) from exc
+        except httpx.ReadTimeout as exc:
+            raise ApiError(
+                504,
+                "agent_runtime_stream_read_timeout",
+                "The gateway timed out while waiting for Agent Runtime to send stream data.",
+                {
+                    "reason": str(exc),
+                    "timeout_seconds": self.read_timeout_seconds,
+                    "timeout_type": "read",
+                },
+            ) from exc
         except httpx.RequestError as exc:
             raise ApiError(
                 502,
@@ -277,6 +338,17 @@ class AgentRuntimeClient:
             return [parsed]
         return []
 
+    def _extract_event_payloads(self, response_payload: dict[str, Any]) -> list[dict[str, Any]]:
+        output = response_payload.get("output", response_payload)
+        if isinstance(output, list):
+            return [item for item in output if isinstance(item, dict)]
+        if isinstance(output, dict):
+            events = output.get("events")
+            if isinstance(events, list):
+                return [item for item in events if isinstance(item, dict)]
+            return [output]
+        return []
+
     def _extract_text_fragments(self, event_payload: dict[str, Any]) -> list[str]:
         fragments: list[str] = []
 
@@ -368,7 +440,13 @@ async def get_agent_runtime_client() -> AgentRuntimeClient:
     if _client_singleton is None:
         async with _client_lock:
             if _client_singleton is None:
-                _client_singleton = AgentRuntimeClient()
+                from services.agent_gateway.app.core.config import get_settings
+
+                settings = get_settings()
+                _client_singleton = AgentRuntimeClient(
+                    connect_timeout_seconds=settings.upstream_connect_timeout_seconds,
+                    read_timeout_seconds=settings.upstream_read_timeout_seconds,
+                )
     return _client_singleton
 
 

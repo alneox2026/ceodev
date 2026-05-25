@@ -18,11 +18,11 @@ class RequestContext:
 
 
 def build_request_context(agent_id: str, client_turn_id: str | None = None) -> RequestContext:
-    turn_id = client_turn_id.strip() if client_turn_id else new_turn_id()
+    # Client turn ids are correlation metadata only; persisted document ids stay server-owned.
+    turn_id = new_turn_id()
     return RequestContext(
         request_id=f"req-{uuid.uuid4().hex}",
         turn_id=turn_id,
         started_at=datetime.now(timezone.utc),
         agent_id=agent_id,
     )
-
