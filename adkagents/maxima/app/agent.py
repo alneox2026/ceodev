@@ -22,7 +22,7 @@ from google.genai import types
 root_agent = Agent(
     name="maxima",
     model=Gemini(
-        model="gemini-2.5-flash",
+        model="gemini-2.5-pro",
         retry_options=types.HttpRetryOptions(attempts=3),
     ),
     instruction=(

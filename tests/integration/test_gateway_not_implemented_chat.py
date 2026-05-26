@@ -145,6 +145,10 @@ def test_stream_chat_returns_normalized_sse_contract(monkeypatch) -> None:
     monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
     response = client.post("/v1/agents/maxima/chat/stream", json={"message": "hello"})
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache, no-transform"
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert response.headers["x-content-type-options"] == "nosniff"
     assert "event: metadata" in response.text
     assert 'data: {"text": "echo:hello"}' in response.text
     assert "event: done" in response.text
