@@ -51,7 +51,7 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
         user_id=user_id,
         request=payload,
     )
-    agent_response = await runtime_client.chat(
+    agent_response = await runtime_client.chat_buffered_query(
         agent_config=agent_config,
         user_id=user_id,
         session_id=session_result.session_id,

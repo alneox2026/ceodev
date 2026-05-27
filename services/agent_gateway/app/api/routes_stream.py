@@ -218,6 +218,22 @@ async def stream_chat(
         client_turn_id=payload.client_turn_id,
     )
     user_id = await authenticate_request(request)
+    if not agent_config.streaming_enabled:
+        log_structured(
+            LOGGER,
+            logging.INFO,
+            "gateway_stream_rejected_disabled",
+            request_id=request_context.request_id,
+            turn_id=request_context.turn_id,
+            agent_id=agent_config.agent_id,
+            user_id=user_id,
+        )
+        raise ApiError(
+            409,
+            "streaming_not_enabled",
+            f"This gateway is configured for non-streaming chat. Use /v1/agents/{agent_config.agent_id}/chat.",
+            {"agent_id": agent_config.agent_id},
+        )
     runtime_client = await get_agent_runtime_client()
     session_service = await get_chat_session_service()
     session_result = await session_service.resolve(

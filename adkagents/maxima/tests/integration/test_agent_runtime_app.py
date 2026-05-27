@@ -93,7 +93,7 @@ def test_agent_feedback(agent_app: AgentEngineApp) -> None:
     logging.info("All assertions passed for agent feedback test")
 
 
-def test_async_stream_query_defaults_to_sse(
+def test_async_stream_query_defaults_to_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured_run_config: dict[str, Any] = {}
@@ -127,7 +127,7 @@ def test_async_stream_query_defaults_to_sse(
 
     asyncio.run(_run())
 
-    assert captured_run_config["streaming_mode"] == "sse"
+    assert captured_run_config["streaming_mode"] == "none"
 
 
 def test_async_stream_query_preserves_explicit_run_config(

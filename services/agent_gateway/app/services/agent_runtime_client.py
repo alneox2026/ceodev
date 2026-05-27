@@ -109,21 +109,11 @@ class AgentRuntimeClient:
         session_id: str,
         message: str,
     ) -> BufferedAgentResponse:
-        raw_events: list[dict[str, Any]] = []
-        assembler = TurnAssembler()
-        async for upstream_event in self.stream_chat_events(
+        return await self.chat_buffered_query(
             agent_config=agent_config,
             user_id=user_id,
             session_id=session_id,
             message=message,
-        ):
-            raw_events.append(upstream_event.payload)
-            for fragment in self._extract_text_fragments(upstream_event.payload):
-                assembler.add_text(fragment)
-
-        return BufferedAgentResponse(
-            reply_text=assembler.reply_text(),
-            raw_events=raw_events,
         )
 
     async def chat_buffered_query(

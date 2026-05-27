@@ -11,6 +11,7 @@ from services.agent_gateway.app.core.config import get_settings
 from services.agent_gateway.app.core.errors import ApiError
 from services.agent_gateway.app.services.agent_runtime_client import (
     AgentRuntimeClient,
+    BUFFERED_RUN_CONFIG,
     STREAM_RUN_CONFIG,
     close_agent_runtime_client,
     get_agent_runtime_client,
@@ -41,10 +42,30 @@ class _FakeStreamResponse:
         return b""
 
 
+class _FakeJsonResponse:
+    def __init__(self, payload: dict | None = None, status_code: int = 200) -> None:
+        self._payload = payload or {
+            "output": [
+                {"content": {"role": "model", "parts": [{"text": "echo:hello"}]}}
+            ]
+        }
+        self.status_code = status_code
+        self.text = ""
+
+    def json(self) -> dict:
+        return self._payload
+
+
 class _RecordingAsyncClient:
-    def __init__(self, response: _FakeStreamResponse | None = None) -> None:
+    def __init__(
+        self,
+        response: _FakeStreamResponse | None = None,
+        json_response: _FakeJsonResponse | None = None,
+    ) -> None:
         self.stream_calls: list[dict[str, object]] = []
+        self.post_calls: list[dict[str, object]] = []
         self._response = response or _FakeStreamResponse()
+        self._json_response = json_response or _FakeJsonResponse()
 
     def stream(self, method: str, url: str, headers=None, json=None):
         self.stream_calls.append(
@@ -56,6 +77,16 @@ class _RecordingAsyncClient:
             }
         )
         return self._response
+
+    async def post(self, url: str, headers=None, json=None):
+        self.post_calls.append(
+            {
+                "url": url,
+                "headers": headers,
+                "json": json,
+            }
+        )
+        return self._json_response
 
     async def aclose(self) -> None:
         return None
@@ -274,16 +305,26 @@ def test_stream_chat_events_parses_multiple_json_objects_from_one_sse_message() 
     asyncio.run(_run())
 
 
-def test_buffered_chat_reassembles_cumulative_fragments() -> None:
+def test_buffered_chat_requests_non_streaming_run_config() -> None:
     async def _run() -> None:
         http_client = _RecordingAsyncClient(
-            response=_FakeStreamResponse(
-                lines=[
-                    "event: message",
-                    'data: {"content":{"role":"model","parts":[{"text":"echo:"}]}}',
-                    'data: {"content":{"role":"model","parts":[{"text":"echo:hello"}]}}',
-                    "",
-                ]
+            json_response=_FakeJsonResponse(
+                payload={
+                    "output": [
+                        {
+                            "content": {
+                                "role": "model",
+                                "parts": [{"text": "echo:"}],
+                            }
+                        },
+                        {
+                            "content": {
+                                "role": "model",
+                                "parts": [{"text": "echo:hello"}],
+                            }
+                        },
+                    ]
+                }
             )
         )
         runtime_client = AgentRuntimeClient(http_client=http_client)
@@ -299,5 +340,17 @@ def test_buffered_chat_reassembles_cumulative_fragments() -> None:
 
         assert response.reply_text == "echo:hello"
         assert len(response.raw_events) == 2
+        assert len(http_client.stream_calls) == 0
+        assert len(http_client.post_calls) == 1
+        post_call = http_client.post_calls[0]
+        assert post_call["json"] == {
+            "class_method": "async_stream_query",
+            "input": {
+                "user_id": "user-1",
+                "session_id": "session-1",
+                "message": "hello",
+                "run_config": BUFFERED_RUN_CONFIG,
+            },
+        }
 
     asyncio.run(_run())

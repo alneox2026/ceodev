@@ -21,7 +21,7 @@ class AgentConfig(BaseModel):
     agent_id: str
     resource_name: str
     region: str
-    streaming_enabled: bool = True
+    streaming_enabled: bool = False
     persistence_enabled: bool = True
     auth_policy: str = "firebase"
 

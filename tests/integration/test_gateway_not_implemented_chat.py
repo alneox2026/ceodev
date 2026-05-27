@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from common.schemas import AgentConfig
 from services.agent_gateway.app.main import app
 from services.agent_gateway.app.api import routes_chat
 from services.agent_gateway.app.api import routes_stream
@@ -20,6 +21,7 @@ class FakeAgentRuntimeClient:
         delay_seconds=0.0,
         stream_error=None,
         fallback_reply_text=None,
+        fallback_error=None,
     ):
         self._upstream_events = upstream_events or [
             UpstreamStreamEvent(
@@ -36,6 +38,10 @@ class FakeAgentRuntimeClient:
         self._delay_seconds = delay_seconds
         self._stream_error = stream_error
         self._fallback_reply_text = fallback_reply_text
+        self._fallback_error = fallback_error
+        self.chat_calls: list[dict[str, object]] = []
+        self.buffered_query_calls: list[dict[str, object]] = []
+        self.stream_calls: list[dict[str, object]] = []
 
     async def ensure_session(self, *, agent_config, user_id, request):
         return SimpleNamespace(
@@ -44,27 +50,34 @@ class FakeAgentRuntimeClient:
         )
 
     async def chat(self, *, agent_config, user_id, session_id, message):
-        return SimpleNamespace(
-            reply_text=f"echo:{message}",
-            raw_events=[],
+        self.chat_calls.append(
+            {"agent_id": agent_config.agent_id, "user_id": user_id, "session_id": session_id, "message": message}
         )
+        raise AssertionError("buffered route must use chat_buffered_query")
 
     async def chat_buffered_query(self, *, agent_config, user_id, session_id, message):
-        if self._fallback_reply_text is None:
-            raise ApiError(502, "fallback_unavailable", "Fallback unavailable.")
+        self.buffered_query_calls.append(
+            {"agent_id": agent_config.agent_id, "user_id": user_id, "session_id": session_id, "message": message}
+        )
+        if self._fallback_error is not None:
+            raise self._fallback_error
+        reply_text = self._fallback_reply_text or f"echo:{message}"
         return SimpleNamespace(
-            reply_text=self._fallback_reply_text,
+            reply_text=reply_text,
             raw_events=[
                 {
                     "content": {
                         "role": "model",
-                        "parts": [{"text": self._fallback_reply_text}],
+                        "parts": [{"text": reply_text}],
                     }
                 }
             ],
         )
 
     async def stream_chat_events(self, *, agent_config, user_id, session_id, message):
+        self.stream_calls.append(
+            {"agent_id": agent_config.agent_id, "user_id": user_id, "session_id": session_id, "message": message}
+        )
         if self._stream_error is not None:
             if self._delay_seconds:
                 await asyncio.sleep(self._delay_seconds)
@@ -97,11 +110,25 @@ async def _fake_get_pubsub_publisher() -> FakePublisher:
     return FakePublisher()
 
 
+def _fake_get_streaming_agent_config(agent_id: str) -> AgentConfig:
+    return AgentConfig(
+        agent_id=agent_id,
+        resource_name="projects/test/locations/us-central1/reasoningEngines/123",
+        region="us-central1",
+        streaming_enabled=True,
+    )
+
+
+def _enable_streaming_route(monkeypatch) -> None:
+    monkeypatch.setattr(routes_stream, "get_agent_config", _fake_get_streaming_agent_config)
+
+
 def _make_runtime_client(
     upstream_events=None,
     delay_seconds=0.0,
     stream_error=None,
     fallback_reply_text=None,
+    fallback_error=None,
 ):
     async def _fake_runtime_client():
         return FakeAgentRuntimeClient(
@@ -109,14 +136,20 @@ def _make_runtime_client(
             delay_seconds=delay_seconds,
             stream_error=stream_error,
             fallback_reply_text=fallback_reply_text,
+            fallback_error=fallback_error,
         )
 
     return _fake_runtime_client
 
 
 def test_buffered_chat_returns_structured_success(monkeypatch) -> None:
+    runtime_client = FakeAgentRuntimeClient()
+
+    async def _runtime_client():
+        return runtime_client
+
     monkeypatch.setattr(routes_chat, "authenticate_request", _fake_authenticate_request)
-    monkeypatch.setattr(routes_chat, "get_agent_runtime_client", _fake_get_agent_runtime_client)
+    monkeypatch.setattr(routes_chat, "get_agent_runtime_client", _runtime_client)
     monkeypatch.setattr(routes_chat, "get_pubsub_publisher", _fake_get_pubsub_publisher)
 
     response = client.post("/v1/agents/maxima/chat", json={"message": "hello"})
@@ -127,6 +160,10 @@ def test_buffered_chat_returns_structured_success(monkeypatch) -> None:
     assert payload["thread_id"] == "thread-fake"
     assert payload["session_id"] == "session-fake"
     assert payload["reply_text"] == "echo:hello"
+    assert len(runtime_client.chat_calls) == 0
+    assert len(runtime_client.stream_calls) == 0
+    assert len(runtime_client.buffered_query_calls) == 1
+    assert runtime_client.buffered_query_calls[0]["message"] == "hello"
 
 
 def test_buffered_chat_rejects_unknown_agent(monkeypatch) -> None:
@@ -139,8 +176,20 @@ def test_buffered_chat_rejects_unknown_agent(monkeypatch) -> None:
     assert response.json()["error"]["code"] == "unknown_agent"
 
 
+def test_stream_chat_rejects_when_streaming_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+
+    response = client.post("/v1/agents/maxima/chat/stream", json={"message": "hello"})
+
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["error"]["code"] == "streaming_not_enabled"
+    assert "/v1/agents/maxima/chat" in payload["error"]["message"]
+
+
 def test_stream_chat_returns_normalized_sse_contract(monkeypatch) -> None:
     monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(routes_stream, "get_agent_runtime_client", _fake_get_agent_runtime_client)
     monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
     response = client.post("/v1/agents/maxima/chat/stream", json={"message": "hello"})
@@ -171,6 +220,7 @@ def test_stream_chat_emits_status_while_waiting_for_upstream(monkeypatch) -> Non
 
     monkeypatch.setattr(routes_stream, "STREAM_STATUS_INTERVAL_SECONDS", 0.01)
     monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(
         routes_stream,
         "get_agent_runtime_client",
@@ -208,10 +258,14 @@ def test_stream_chat_emits_status_error_and_done_on_upstream_read_timeout(monkey
         log_calls.append({"event": event, **fields})
 
     monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(
         routes_stream,
         "get_agent_runtime_client",
-        _make_runtime_client(stream_error=stream_error),
+        _make_runtime_client(
+            stream_error=stream_error,
+            fallback_error=RuntimeError("fallback unavailable"),
+        ),
     )
     monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
     monkeypatch.setattr(routes_stream, "log_structured", _capture_log)
@@ -253,6 +307,7 @@ def test_stream_chat_falls_back_to_buffered_before_any_token(monkeypatch) -> Non
     )
 
     monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(
         routes_stream,
         "get_agent_runtime_client",
@@ -299,6 +354,7 @@ def test_stream_chat_does_not_fallback_after_token(monkeypatch) -> None:
         return TokenThenErrorClient()
 
     monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(routes_stream, "get_agent_runtime_client", _runtime_client)
     monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
 
@@ -338,6 +394,7 @@ def test_stream_chat_logs_fragment_counters_for_multiple_text_events(monkeypatch
         log_calls.append({"event": event, **fields})
 
     monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(
         routes_stream,
         "get_agent_runtime_client",
@@ -387,6 +444,7 @@ def test_stream_chat_emits_only_new_suffix_for_cumulative_partials(monkeypatch) 
     ]
 
     monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(
         routes_stream,
         "get_agent_runtime_client",
@@ -426,6 +484,7 @@ def test_stream_chat_debug_log_captures_upstream_shape_without_text(monkeypatch)
         log_calls.append({"event": event, **fields})
 
     monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(
         routes_stream,
         "get_agent_runtime_client",

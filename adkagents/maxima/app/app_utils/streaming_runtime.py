@@ -3,11 +3,10 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, Mapping
 from typing import Any
 
-from google.adk.agents.run_config import StreamingMode
 from vertexai.agent_engines.templates.adk import AdkApp
 
 
-DEFAULT_STREAMING_MODE = StreamingMode.SSE.value
+DEFAULT_STREAMING_MODE = "none"
 
 
 def merge_stream_run_config(
