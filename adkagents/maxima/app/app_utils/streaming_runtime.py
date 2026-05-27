@@ -6,7 +6,7 @@ from typing import Any
 from vertexai.agent_engines.templates.adk import AdkApp
 
 
-DEFAULT_STREAMING_MODE = "none"
+DEFAULT_STREAMING_MODE = None
 
 
 def merge_stream_run_config(
@@ -21,7 +21,7 @@ def merge_buffered_run_config(
     run_config: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     merged_run_config = dict(run_config or {})
-    merged_run_config["streaming_mode"] = "none"
+    merged_run_config["streaming_mode"] = None
     return merged_run_config
 
 

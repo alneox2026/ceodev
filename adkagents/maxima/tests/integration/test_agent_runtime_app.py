@@ -127,7 +127,7 @@ def test_async_stream_query_defaults_to_none(
 
     asyncio.run(_run())
 
-    assert captured_run_config["streaming_mode"] == "none"
+    assert captured_run_config["streaming_mode"] is None
 
 
 def test_async_stream_query_preserves_explicit_run_config(
@@ -154,7 +154,7 @@ def test_async_stream_query_preserves_explicit_run_config(
     from app.agent_runtime_app import agent_runtime
 
     explicit_run_config = {
-        "streaming_mode": "none",
+        "streaming_mode": None,
         "max_llm_calls": 12,
         "custom_metadata": {"origin": "test"},
     }
@@ -216,6 +216,6 @@ def test_async_buffered_query_forces_non_streaming_run_config(
 
     assert events == [{"content": {"role": "model", "parts": [{"text": "final"}]}}]
     assert captured_run_config == {
-        "streaming_mode": "none",
+        "streaming_mode": None,
         "max_llm_calls": 12,
     }

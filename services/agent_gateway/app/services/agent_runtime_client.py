@@ -20,7 +20,7 @@ from services.agent_gateway.app.services.turn_assembler import TurnAssembler
 
 AUTH_SCOPES = ("https://www.googleapis.com/auth/cloud-platform",)
 STREAM_RUN_CONFIG = {"streaming_mode": "sse"}
-BUFFERED_RUN_CONFIG = {"streaming_mode": "none"}
+BUFFERED_RUN_CONFIG = {"streaming_mode": None}
 
 _client_singleton: "AgentRuntimeClient | None" = None
 _client_lock = asyncio.Lock()
