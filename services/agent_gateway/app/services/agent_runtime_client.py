@@ -127,7 +127,7 @@ class AgentRuntimeClient:
         response_payload = await self._post_json(
             url=self._build_query_url(agent_config),
             payload={
-                "class_method": "async_stream_query",
+                "class_method": "async_buffered_query",
                 "input": {
                     "user_id": user_id,
                     "session_id": session_id,

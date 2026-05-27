@@ -50,6 +50,10 @@ class AgentEngineApp(StreamingDefaultAdkApp):
         """Registers the operations of the Agent."""
         operations = super().register_operations()
         operations[""] = [*operations.get("", []), "register_feedback"]
+        operations["async"] = [
+            *operations.get("async", []),
+            "async_buffered_query",
+        ]
         return operations
 
 

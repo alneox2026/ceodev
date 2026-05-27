@@ -172,3 +172,50 @@ def test_async_stream_query_preserves_explicit_run_config(
     asyncio.run(_run())
 
     assert captured_run_config == explicit_run_config
+
+
+def test_register_operations_exposes_buffered_query() -> None:
+    from app.agent_runtime_app import agent_runtime
+
+    operations = agent_runtime.register_operations()
+
+    assert "async_buffered_query" in operations["async"]
+    assert "async_stream_query" in operations["async_stream"]
+
+
+def test_async_buffered_query_forces_non_streaming_run_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_run_config: dict[str, Any] = {}
+
+    async def fake_async_stream_query(
+        self,
+        *,
+        message: str | dict[str, Any],
+        user_id: str,
+        session_id: str | None = None,
+        session_events: list[dict[str, Any]] | None = None,
+        run_config: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> AsyncIterator[dict[str, Any]]:
+        del self, message, user_id, session_id, session_events, kwargs
+        captured_run_config.update(run_config or {})
+        yield {"content": {"role": "model", "parts": [{"text": "final"}]}}
+
+    monkeypatch.setattr(AdkApp, "async_stream_query", fake_async_stream_query)
+
+    from app.agent_runtime_app import agent_runtime
+
+    events = asyncio.run(
+        agent_runtime.async_buffered_query(
+            message="hello",
+            user_id="test-user",
+            run_config={"streaming_mode": "sse", "max_llm_calls": 12},
+        )
+    )
+
+    assert events == [{"content": {"role": "model", "parts": [{"text": "final"}]}}]
+    assert captured_run_config == {
+        "streaming_mode": "none",
+        "max_llm_calls": 12,
+    }

@@ -344,7 +344,7 @@ def test_buffered_chat_requests_non_streaming_run_config() -> None:
         assert len(http_client.post_calls) == 1
         post_call = http_client.post_calls[0]
         assert post_call["json"] == {
-            "class_method": "async_stream_query",
+            "class_method": "async_buffered_query",
             "input": {
                 "user_id": "user-1",
                 "session_id": "session-1",
