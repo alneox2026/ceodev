@@ -98,6 +98,7 @@ name = "maxima"
 description = "Simple ReAct agent"
 base_template = "adk"
 agent_directory = "app"
+region = "us-central1"
 
 # Generation context
 generated_at = "2026-04-30T07:53:28.521194+00:00"
@@ -111,4 +112,3 @@ cicd_runner = "skip"
 include_data_ingestion = false
 
 datastore = "none"
-

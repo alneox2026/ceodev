@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 import yaml
@@ -10,6 +11,22 @@ from common.ids import validate_agent_id
 from common.schemas import AgentConfig
 from services.agent_gateway.app.core.config import get_settings
 from services.agent_gateway.app.core.errors import ApiError
+
+
+def _agent_env_key(agent_id: str, suffix: str) -> str:
+    normalized_agent_id = "".join(
+        character if character.isalnum() else "_"
+        for character in agent_id.upper()
+    )
+    return f"AGENT_{normalized_agent_id}_{suffix}"
+
+
+def _env_override(agent_id: str, suffix: str) -> str | None:
+    value = os.getenv(_agent_env_key(agent_id, suffix))
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 @lru_cache(maxsize=1)
@@ -26,6 +43,17 @@ def load_registry() -> dict[str, AgentConfig]:
     for raw_agent_id, config in agents.items():
         if not isinstance(config, dict):
             raise RuntimeError(f"Agent config for '{raw_agent_id}' must be an object.")
+        config = dict(config)
+        agent_id = str(config.get("agent_id") or raw_agent_id)
+
+        resource_name_override = _env_override(agent_id, "RESOURCE_NAME")
+        if resource_name_override:
+            config["resource_name"] = resource_name_override
+
+        region_override = _env_override(agent_id, "REGION")
+        if region_override:
+            config["region"] = region_override
+
         agent_config = AgentConfig(**config)
         registry[agent_config.agent_id] = agent_config
     return registry
@@ -43,4 +71,3 @@ def get_agent_config(agent_id: str) -> AgentConfig:
             {"agent_id": cleaned_agent_id},
         )
     return agent_config
-
