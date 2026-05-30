@@ -32,5 +32,5 @@ root_agent = Agent(
 
 app = App(
     root_agent=root_agent,
-    name="maxima_cloudrun",
+    name="app",
 )
