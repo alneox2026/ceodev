@@ -124,6 +124,36 @@ def test_chat_buffered_query_posts_run_sse_and_parses_sse_events() -> None:
     asyncio.run(_run())
 
 
+def test_chat_buffered_query_treats_existing_session_as_idempotent() -> None:
+    async def _run() -> None:
+        sse_text = (
+            "data: {\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hello\"}]}}\n\n"
+        )
+        http_client = _RecordingHttpClient(
+            responses=[
+                _FakeResponse(
+                    payload={"detail": "Session already exists: session-1"},
+                    status_code=409,
+                ),
+                _FakeResponse(text=sse_text, content_type="text/event-stream"),
+            ]
+        )
+        client = CloudRunAdkClient(http_client=http_client)
+        client._authorized_headers = _fake_authorized_headers  # type: ignore[method-assign]
+
+        response = await client.chat_buffered_query(
+            agent_config=_agent_config(),
+            user_id="user-1",
+            session_id="session-1",
+            message="hello",
+        )
+
+        assert response.reply_text == "hello"
+        assert len(http_client.post_calls) == 2
+
+    asyncio.run(_run())
+
+
 def test_chat_buffered_query_maps_cloud_run_error() -> None:
     async def _run() -> None:
         http_client = _RecordingHttpClient(

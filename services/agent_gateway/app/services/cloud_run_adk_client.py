@@ -132,6 +132,7 @@ class CloudRunAdkClient:
             ),
             payload={},
             error_code="cloud_run_adk_session_error",
+            conflict_ok=True,
         )
 
     async def _post_run_sse(
@@ -170,6 +171,7 @@ class CloudRunAdkClient:
         path: str,
         payload: dict[str, Any],
         error_code: str,
+        conflict_ok: bool = False,
     ) -> dict[str, Any]:
         headers = await self._authorized_headers(agent_config)
         try:
@@ -190,6 +192,8 @@ class CloudRunAdkClient:
                 {"reason": str(exc)},
             ) from exc
 
+        if conflict_ok and response.status_code == 409:
+            return {}
         if response.status_code >= 400:
             raise self._response_error(response, error_code)
         if not response.content:
