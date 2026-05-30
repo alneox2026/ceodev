@@ -68,8 +68,10 @@ def build_thread_delete_requested_event(
     return ThreadDeleteRequestedEvent(
         event_id=new_event_id(),
         agent_id=agent_config.agent_id,
+        agent_backend=agent_config.backend,
         agent_region=agent_config.region,
         agent_resource_name=agent_config.resource_name,
+        runtime_session_cleanup=agent_config.runtime_session_cleanup or "agent_runtime",
         user_id=user_id,
         thread_id=thread_id,
         session_id=session_id,

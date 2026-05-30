@@ -54,6 +54,26 @@ def load_registry() -> dict[str, AgentConfig]:
         if region_override:
             config["region"] = region_override
 
+        backend_override = _env_override(agent_id, "BACKEND")
+        if backend_override:
+            config["backend"] = backend_override
+
+        base_url_override = _env_override(agent_id, "BASE_URL")
+        if base_url_override:
+            config["base_url"] = base_url_override
+
+        app_name_override = _env_override(agent_id, "APP_NAME")
+        if app_name_override:
+            config["app_name"] = app_name_override
+
+        audience_override = _env_override(agent_id, "AUDIENCE")
+        if audience_override:
+            config["audience"] = audience_override
+
+        runtime_cleanup_override = _env_override(agent_id, "RUNTIME_SESSION_CLEANUP")
+        if runtime_cleanup_override:
+            config["runtime_session_cleanup"] = runtime_cleanup_override
+
         agent_config = AgentConfig(**config)
         registry[agent_config.agent_id] = agent_config
     return registry

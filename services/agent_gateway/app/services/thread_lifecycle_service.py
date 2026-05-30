@@ -100,7 +100,7 @@ class ThreadLifecycleService:
             await publisher.publish_thread_delete_requested(event)
             runtime_status = RUNTIME_SESSION_STATUS_DELETE_PENDING
         else:
-            runtime_status = RUNTIME_SESSION_STATUS_DELETED
+            runtime_status = result.runtime_session_status
 
         return ThreadLifecycleResponse(
             ok=True,

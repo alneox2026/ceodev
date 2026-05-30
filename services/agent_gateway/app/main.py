@@ -16,6 +16,7 @@ from services.agent_gateway.app.core.config import get_settings
 from services.agent_gateway.app.core.errors import register_exception_handlers
 from services.agent_gateway.app.core.logging import configure_logging
 from services.agent_gateway.app.services.agent_runtime_client import close_agent_runtime_client
+from services.agent_gateway.app.services.cloud_run_adk_client import close_cloud_run_adk_client
 from services.agent_gateway.app.services.pubsub_publisher import close_pubsub_publisher
 
 
@@ -41,6 +42,7 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         await close_agent_runtime_client()
+        await close_cloud_run_adk_client()
         await close_pubsub_publisher()
         LOGGER.info(
             "agent_gateway_shutdown",

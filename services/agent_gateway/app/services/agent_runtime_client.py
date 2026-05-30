@@ -270,12 +270,24 @@ class AgentRuntimeClient:
         return credentials
 
     def _build_query_url(self, agent_config: AgentConfig) -> str:
+        if not agent_config.resource_name:
+            raise ApiError(
+                500,
+                "missing_agent_runtime_resource_name",
+                "The Agent Runtime agent is missing resource_name configuration.",
+            )
         return (
             f"https://{agent_config.region}-aiplatform.googleapis.com/v1/"
             f"{agent_config.resource_name}:query"
         )
 
     def _build_stream_query_url(self, agent_config: AgentConfig) -> str:
+        if not agent_config.resource_name:
+            raise ApiError(
+                500,
+                "missing_agent_runtime_resource_name",
+                "The Agent Runtime agent is missing resource_name configuration.",
+            )
         return (
             f"https://{agent_config.region}-aiplatform.googleapis.com/v1/"
             f"{agent_config.resource_name}:streamQuery?alt=sse"

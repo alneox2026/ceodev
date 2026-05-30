@@ -11,9 +11,7 @@ from common.schemas import ChatRequest, ChatResponse
 from services.agent_gateway.app.core.auth import authenticate_request
 from services.agent_gateway.app.core.logging import log_structured
 from services.agent_gateway.app.services.agent_registry import get_agent_config
-from services.agent_gateway.app.services.agent_runtime_client import (
-    get_agent_runtime_client,
-)
+from services.agent_gateway.app.services.chat_backend_resolver import get_chat_backend_client
 from services.agent_gateway.app.services.chat_session_service import get_chat_session_service
 from services.agent_gateway.app.services.pubsub_publisher import get_pubsub_publisher
 from services.agent_gateway.app.services.request_context import build_request_context
@@ -34,7 +32,7 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
         client_turn_id=payload.client_turn_id,
     )
     user_id = await authenticate_request(request)
-    runtime_client = await get_agent_runtime_client()
+    backend_client = await get_chat_backend_client(agent_config)
     session_service = await get_chat_session_service()
     log_structured(
         LOGGER,
@@ -46,12 +44,12 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
         user_id=user_id,
     )
     session_result = await session_service.resolve(
-        runtime_client=runtime_client,
+        runtime_client=backend_client,
         agent_config=agent_config,
         user_id=user_id,
         request=payload,
     )
-    agent_response = await runtime_client.chat_buffered_query(
+    agent_response = await backend_client.chat_buffered_query(
         agent_config=agent_config,
         user_id=user_id,
         session_id=session_result.session_id,

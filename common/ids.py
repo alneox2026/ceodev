@@ -21,6 +21,10 @@ def new_event_id() -> str:
     return f"evt-{uuid.uuid4().hex}"
 
 
+def new_session_id() -> str:
+    return f"session-{uuid.uuid4().hex}"
+
+
 def validate_agent_id(agent_id: str) -> str:
     cleaned = agent_id.strip().lower()
     if not cleaned:

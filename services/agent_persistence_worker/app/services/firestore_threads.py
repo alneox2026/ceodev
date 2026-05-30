@@ -8,6 +8,7 @@ from typing import Any
 from common.constants import (
     RUNTIME_SESSION_STATUS_DELETE_FAILED,
     RUNTIME_SESSION_STATUS_DELETED,
+    RUNTIME_SESSION_STATUS_NOT_APPLICABLE,
     STATUS_ACTIVE,
     STATUS_ARCHIVED,
     STATUS_DELETED,
@@ -117,14 +118,20 @@ class FirestoreThreadsRepository:
         *,
         thread_id: str,
         completed_at: datetime,
+        runtime_session_status: str = RUNTIME_SESSION_STATUS_DELETED,
         error_code: str | None = None,
     ) -> None:
         payload: dict[str, Any] = {
-            "runtime_session_status": RUNTIME_SESSION_STATUS_DELETED,
+            "runtime_session_status": runtime_session_status,
             "delete_completed_at": completed_at,
             "updated_at": completed_at,
             "last_runtime_error_message": None,
         }
+        if runtime_session_status not in {
+            RUNTIME_SESSION_STATUS_DELETED,
+            RUNTIME_SESSION_STATUS_NOT_APPLICABLE,
+        }:
+            payload["runtime_session_status"] = RUNTIME_SESSION_STATUS_DELETED
         payload["last_runtime_error_code"] = error_code
         batch.set(self.document(client, thread_id), payload, merge=True)
 

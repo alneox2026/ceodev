@@ -10,6 +10,7 @@ from typing import Any, Callable
 from common.constants import (
     RUNTIME_SESSION_STATUS_DELETE_FAILED,
     RUNTIME_SESSION_STATUS_DELETED,
+    RUNTIME_SESSION_STATUS_NOT_APPLICABLE,
 )
 from common.schemas import ThreadDeleteRequestedEvent
 from services.agent_persistence_worker.app.core.errors import RetryableWorkerError
@@ -61,6 +62,10 @@ class DeleteThreadService:
         if duplicate_result is not None:
             return duplicate_result
 
+        if event.runtime_session_cleanup == "none" or event.agent_backend == "cloud_run_adk":
+            outcome = (RUNTIME_SESSION_STATUS_NOT_APPLICABLE, "runtime_cleanup_not_applicable")
+            return await asyncio.to_thread(self._persist_outcome_sync, event, outcome)
+
         runtime_client = await self.runtime_sessions_client_factory()
         try:
             outcome = await self._delete_runtime_session(runtime_client, event)
@@ -84,7 +89,12 @@ class DeleteThreadService:
         return DeleteThreadResult(
             event_id=event.event_id,
             thread_id=event.thread_id,
-            runtime_session_status=RUNTIME_SESSION_STATUS_DELETED,
+            runtime_session_status=(
+                RUNTIME_SESSION_STATUS_NOT_APPLICABLE
+                if event.runtime_session_cleanup == "none"
+                or event.agent_backend == "cloud_run_adk"
+                else RUNTIME_SESSION_STATUS_DELETED
+            ),
         )
 
     async def _delete_runtime_session(
@@ -114,12 +124,16 @@ class DeleteThreadService:
         batch = client.batch()
         self.idempotency_store.add_create_to_batch(batch, client, event)
 
-        if runtime_status == RUNTIME_SESSION_STATUS_DELETED:
+        if runtime_status in {
+            RUNTIME_SESSION_STATUS_DELETED,
+            RUNTIME_SESSION_STATUS_NOT_APPLICABLE,
+        }:
             self.threads_repository.add_delete_completed_to_batch(
                 batch,
                 client,
                 thread_id=event.thread_id,
                 completed_at=datetime.now(timezone.utc),
+                runtime_session_status=runtime_status,
                 error_code=error_code,
             )
         else:

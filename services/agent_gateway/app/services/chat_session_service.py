@@ -8,9 +8,7 @@ from typing import Any, Callable
 
 from common.schemas import AgentConfig, ChatRequest
 from services.agent_gateway.app.core.errors import ApiError
-from services.agent_gateway.app.services.agent_runtime_client import (
-    AgentRuntimeClient,
-)
+from services.agent_gateway.app.services.chat_backend_resolver import ChatBackendClient
 from services.agent_gateway.app.services.firestore_client import get_firestore_client
 from services.agent_gateway.app.services.thread_repository import ThreadRepository
 
@@ -35,7 +33,7 @@ class ChatSessionService:
     async def resolve(
         self,
         *,
-        runtime_client: AgentRuntimeClient,
+        runtime_client: ChatBackendClient,
         agent_config: AgentConfig,
         user_id: str,
         request: ChatRequest,

@@ -38,6 +38,10 @@ class AgentRuntimeSessionsClient:
         self._auth_lock = asyncio.Lock()
 
     async def delete_session(self, event: ThreadDeleteRequestedEvent) -> None:
+        if not event.agent_resource_name:
+            raise RetryableWorkerError(
+                f"Missing Agent Runtime resource name for delete event {event.event_id}."
+            )
         headers = await self._authorized_headers()
         url = f"https://aiplatform.googleapis.com/v1beta1/{event.agent_resource_name}/sessions/{event.session_id}"
 

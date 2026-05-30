@@ -8,6 +8,7 @@ from typing import Any
 from common.constants import (
     RUNTIME_SESSION_STATUS_DELETE_PENDING,
     RUNTIME_SESSION_STATUS_DELETED,
+    RUNTIME_SESSION_STATUS_NOT_APPLICABLE,
     STATUS_ACTIVE,
     STATUS_ARCHIVED,
     STATUS_DELETED,
@@ -148,7 +149,10 @@ class ThreadRepository:
             "last_runtime_error_code": None,
             "last_runtime_error_message": None,
         }
-        if runtime_session_status == RUNTIME_SESSION_STATUS_DELETED:
+        if runtime_session_status in {
+            RUNTIME_SESSION_STATUS_DELETED,
+            RUNTIME_SESSION_STATUS_NOT_APPLICABLE,
+        }:
             payload["delete_completed_at"] = deleted_at
         if reason:
             payload["delete_reason"] = reason

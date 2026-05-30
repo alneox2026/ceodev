@@ -149,7 +149,7 @@ def test_buffered_chat_returns_structured_success(monkeypatch) -> None:
         return runtime_client
 
     monkeypatch.setattr(routes_chat, "authenticate_request", _fake_authenticate_request)
-    monkeypatch.setattr(routes_chat, "get_agent_runtime_client", _runtime_client)
+    monkeypatch.setattr(routes_chat, "get_chat_backend_client", lambda _agent_config: _runtime_client())
     monkeypatch.setattr(routes_chat, "get_pubsub_publisher", _fake_get_pubsub_publisher)
 
     response = client.post("/v1/agents/maxima/chat", json={"message": "hello"})
@@ -168,12 +168,47 @@ def test_buffered_chat_returns_structured_success(monkeypatch) -> None:
 
 def test_buffered_chat_rejects_unknown_agent(monkeypatch) -> None:
     monkeypatch.setattr(routes_chat, "authenticate_request", _fake_authenticate_request)
-    monkeypatch.setattr(routes_chat, "get_agent_runtime_client", _fake_get_agent_runtime_client)
+    monkeypatch.setattr(
+        routes_chat,
+        "get_chat_backend_client",
+        lambda _agent_config: _fake_get_agent_runtime_client(),
+    )
     monkeypatch.setattr(routes_chat, "get_pubsub_publisher", _fake_get_pubsub_publisher)
 
     response = client.post("/v1/agents/unknown/chat", json={"message": "hello"})
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "unknown_agent"
+
+
+def test_buffered_chat_cloud_run_canary_returns_same_contract(monkeypatch) -> None:
+    backend_client = FakeAgentRuntimeClient(fallback_reply_text="cloud run reply")
+    published_events = []
+
+    async def _backend_client(_agent_config):
+        return backend_client
+
+    class CapturingPublisher:
+        async def publish_turn_completed(self, event):
+            published_events.append(event)
+            return SimpleNamespace(message_id="msg-cloudrun")
+
+    async def _publisher():
+        return CapturingPublisher()
+
+    monkeypatch.setattr(routes_chat, "authenticate_request", _fake_authenticate_request)
+    monkeypatch.setattr(routes_chat, "get_chat_backend_client", _backend_client)
+    monkeypatch.setattr(routes_chat, "get_pubsub_publisher", _publisher)
+
+    response = client.post("/v1/agents/maxima_cloudrun/chat", json={"message": "hello"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["agent_id"] == "maxima_cloudrun"
+    assert payload["reply_text"] == "cloud run reply"
+    assert len(published_events) == 1
+    assert published_events[0].agent_id == "maxima_cloudrun"
+    assert published_events[0].assistant_message == "cloud run reply"
 
 
 def test_stream_chat_rejects_when_streaming_disabled(monkeypatch) -> None:

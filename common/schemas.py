@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from common.constants import (
     EVENT_TYPE_THREAD_DELETE_REQUESTED,
@@ -19,8 +19,13 @@ class AgentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     agent_id: str
-    resource_name: str
+    backend: Literal["agent_runtime", "cloud_run_adk"] = "agent_runtime"
+    resource_name: str | None = None
     region: str
+    base_url: str | None = None
+    app_name: str | None = None
+    audience: str | None = None
+    runtime_session_cleanup: Literal["agent_runtime", "none"] | None = None
     streaming_enabled: bool = False
     persistence_enabled: bool = True
     auth_policy: str = "firebase"
@@ -29,6 +34,32 @@ class AgentConfig(BaseModel):
     @classmethod
     def validate_agent(cls, value: str) -> str:
         return validate_agent_id(value)
+
+    @field_validator("base_url", "app_name", "audience", "resource_name")
+    @classmethod
+    def normalize_optional_string(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def validate_backend_config(self) -> "AgentConfig":
+        if self.backend == "agent_runtime":
+            if not self.resource_name:
+                raise ValueError("resource_name is required for agent_runtime agents.")
+            if self.runtime_session_cleanup is None:
+                self.runtime_session_cleanup = "agent_runtime"
+            return self
+
+        if not self.base_url:
+            raise ValueError("base_url is required for cloud_run_adk agents.")
+        if not self.app_name:
+            raise ValueError("app_name is required for cloud_run_adk agents.")
+        self.base_url = self.base_url.rstrip("/")
+        if self.runtime_session_cleanup is None:
+            self.runtime_session_cleanup = "none"
+        return self
 
 
 class ChatRequest(BaseModel):
@@ -136,8 +167,10 @@ class ThreadDeleteRequestedEvent(BaseModel):
     event_type: str = EVENT_TYPE_THREAD_DELETE_REQUESTED
     event_id: str
     agent_id: str
+    agent_backend: Literal["agent_runtime", "cloud_run_adk"] = "agent_runtime"
     agent_region: str
-    agent_resource_name: str
+    agent_resource_name: str | None = None
+    runtime_session_cleanup: Literal["agent_runtime", "none"] = "agent_runtime"
     user_id: str
     thread_id: str
     session_id: str
