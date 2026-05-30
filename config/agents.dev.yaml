@@ -11,7 +11,7 @@ agents:
     agent_id: maxima_cloudrun
     backend: cloud_run_adk
     base_url: https://maxima-cloudrun-canary-placeholder.run.app
-    app_name: maxima_cloudrun
+    app_name: app
     region: us-central1
     streaming_enabled: false
     persistence_enabled: true
