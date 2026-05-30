@@ -19,6 +19,11 @@ from services.agent_persistence_worker.app.services.agent_runtime_sessions impor
     AgentRuntimeSessionsClient,
     get_agent_runtime_sessions_client,
 )
+from services.agent_persistence_worker.app.services.cloud_run_adk_sessions import (
+    CloudRunAdkSessionNotFoundError,
+    CloudRunAdkSessionsClient,
+    get_cloud_run_adk_sessions_client,
+)
 from services.agent_persistence_worker.app.services.firestore_client import (
     get_firestore_client,
 )
@@ -43,12 +48,16 @@ class DeleteThreadService:
         threads_repository: FirestoreThreadsRepository | None = None,
         firestore_client_factory: Callable[[], Any] | None = None,
         runtime_sessions_client_factory: Callable[[], Any] | None = None,
+        cloud_run_sessions_client_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.idempotency_store = idempotency_store or IdempotencyStore()
         self.threads_repository = threads_repository or FirestoreThreadsRepository()
         self.firestore_client_factory = firestore_client_factory or get_firestore_client
         self.runtime_sessions_client_factory = (
             runtime_sessions_client_factory or get_agent_runtime_sessions_client
+        )
+        self.cloud_run_sessions_client_factory = (
+            cloud_run_sessions_client_factory or get_cloud_run_adk_sessions_client
         )
 
     async def delete_requested(
@@ -62,13 +71,17 @@ class DeleteThreadService:
         if duplicate_result is not None:
             return duplicate_result
 
-        if event.runtime_session_cleanup == "none" or event.agent_backend == "cloud_run_adk":
+        if event.runtime_session_cleanup == "none":
             outcome = (RUNTIME_SESSION_STATUS_NOT_APPLICABLE, "runtime_cleanup_not_applicable")
             return await asyncio.to_thread(self._persist_outcome_sync, event, outcome)
 
-        runtime_client = await self.runtime_sessions_client_factory()
         try:
-            outcome = await self._delete_runtime_session(runtime_client, event)
+            if event.runtime_session_cleanup == "cloud_run_adk":
+                cloud_run_client = await self.cloud_run_sessions_client_factory()
+                outcome = await self._delete_cloud_run_session(cloud_run_client, event)
+            else:
+                runtime_client = await self.runtime_sessions_client_factory()
+                outcome = await self._delete_runtime_session(runtime_client, event)
         except RetryableWorkerError as exc:
             await asyncio.to_thread(
                 self._persist_delete_failed_sync,
@@ -92,7 +105,6 @@ class DeleteThreadService:
             runtime_session_status=(
                 RUNTIME_SESSION_STATUS_NOT_APPLICABLE
                 if event.runtime_session_cleanup == "none"
-                or event.agent_backend == "cloud_run_adk"
                 else RUNTIME_SESSION_STATUS_DELETED
             ),
         )
@@ -112,6 +124,23 @@ class DeleteThreadService:
         except Exception as exc:
             raise RetryableWorkerError(
                 f"Unexpected runtime session delete failure for {event.session_id}: {exc}"
+            ) from exc
+
+    async def _delete_cloud_run_session(
+        self,
+        cloud_run_client: CloudRunAdkSessionsClient,
+        event: ThreadDeleteRequestedEvent,
+    ) -> tuple[str, str | None]:
+        try:
+            await cloud_run_client.delete_session(event)
+            return RUNTIME_SESSION_STATUS_DELETED, None
+        except CloudRunAdkSessionNotFoundError:
+            return RUNTIME_SESSION_STATUS_DELETED, "session_not_found"
+        except RetryableWorkerError:
+            raise
+        except Exception as exc:
+            raise RetryableWorkerError(
+                f"Unexpected Cloud Run ADK session delete failure for {event.session_id}: {exc}"
             ) from exc
 
     def _persist_outcome_sync(
@@ -143,7 +172,7 @@ class DeleteThreadService:
                 thread_id=event.thread_id,
                 failed_at=datetime.now(timezone.utc),
                 error_code=error_code or "delete_failed",
-                error_message="Agent Runtime session deletion failed.",
+                error_message="Runtime session deletion failed.",
             )
 
         try:

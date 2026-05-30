@@ -8,6 +8,7 @@ authors = [
 dependencies = [
     "google-adk>=1.15.0,<2.0.0",
     "google-cloud-logging>=3.12.0,<4.0.0",
+    "google-cloud-aiplatform[agent-engines]>=1.130.0",
     "opentelemetry-instrumentation-google-genai>=0.1.0,<1.0.0",
     "gcsfs>=2024.11.0",
     "protobuf>=6.31.1,<7.0.0",
@@ -40,7 +41,7 @@ acli_version = "0.2.0"
 
 [tool.agents-cli.create_params]
 deployment_target = "cloud_run"
-session_type = "in_memory"
+session_type = "agent_platform_sessions"
 cicd_runner = "skip"
 include_data_ingestion = false
 datastore = "none"

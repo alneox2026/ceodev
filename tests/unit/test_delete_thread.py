@@ -52,6 +52,14 @@ class FakeThreadsRepository:
         raise AssertionError("Cloud Run cleanup none must not mark delete failed")
 
 
+class FakeCloudRunSessionsClient:
+    def __init__(self) -> None:
+        self.deleted = []
+
+    async def delete_session(self, event) -> None:
+        self.deleted.append((event.agent_base_url, event.agent_app_name, event.session_id))
+
+
 def _event() -> ThreadDeleteRequestedEvent:
     return ThreadDeleteRequestedEvent(
         event_id="evt-delete",
@@ -71,11 +79,17 @@ def _cloud_run_event() -> ThreadDeleteRequestedEvent:
         agent_backend="cloud_run_adk",
         agent_region="us-central1",
         agent_resource_name=None,
-        runtime_session_cleanup="none",
+        agent_base_url="https://maxima-cloudrun-canary.example.run.app",
+        agent_app_name="app",
+        runtime_session_cleanup="cloud_run_adk",
         user_id="user-1",
         thread_id="thread-1",
         session_id="session-1",
     )
+
+
+def _cloud_run_event_cleanup_none() -> ThreadDeleteRequestedEvent:
+    return _cloud_run_event().model_copy(update={"runtime_session_cleanup": "none"})
 
 
 def test_duplicate_delete_event_does_not_call_agent_runtime() -> None:
@@ -94,7 +108,7 @@ def test_duplicate_delete_event_does_not_call_agent_runtime() -> None:
     assert result.runtime_session_status == "deleted"
 
 
-def test_cloud_run_delete_event_does_not_call_agent_runtime() -> None:
+def test_cloud_run_delete_event_cleanup_none_does_not_call_runtime() -> None:
     async def _runtime_client_factory():
         raise AssertionError("Cloud Run cleanup none must not call Agent Runtime")
 
@@ -106,7 +120,7 @@ def test_cloud_run_delete_event_does_not_call_agent_runtime() -> None:
         runtime_sessions_client_factory=_runtime_client_factory,
     )
 
-    result = asyncio.run(service.delete_requested(_cloud_run_event()))
+    result = asyncio.run(service.delete_requested(_cloud_run_event_cleanup_none()))
 
     assert result.event_id == "evt-cloudrun-delete"
     assert result.runtime_session_status == "not_applicable"
@@ -118,4 +132,35 @@ def test_cloud_run_delete_event_does_not_call_agent_runtime() -> None:
             "not_applicable",
             "runtime_cleanup_not_applicable",
         ),
+    ]
+
+
+def test_cloud_run_delete_event_calls_cloud_run_session_delete() -> None:
+    async def _runtime_client_factory():
+        raise AssertionError("Cloud Run cleanup must not call Agent Runtime")
+
+    cloud_run_client = FakeCloudRunSessionsClient()
+
+    async def _cloud_run_client_factory():
+        return cloud_run_client
+
+    client = FakeClient()
+    service = DeleteThreadService(
+        idempotency_store=FakeUnprocessedIdempotencyStore(),
+        threads_repository=FakeThreadsRepository(),
+        firestore_client_factory=lambda: client,
+        runtime_sessions_client_factory=_runtime_client_factory,
+        cloud_run_sessions_client_factory=_cloud_run_client_factory,
+    )
+
+    result = asyncio.run(service.delete_requested(_cloud_run_event()))
+
+    assert result.event_id == "evt-cloudrun-delete"
+    assert result.runtime_session_status == "deleted"
+    assert cloud_run_client.deleted == [
+        ("https://maxima-cloudrun-canary.example.run.app", "app", "session-1")
+    ]
+    assert client.batch_instance.actions == [
+        ("idempotency", "evt-cloudrun-delete"),
+        ("delete_completed", "thread-1", "deleted", None),
     ]

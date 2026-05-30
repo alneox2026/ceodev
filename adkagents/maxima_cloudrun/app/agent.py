@@ -12,7 +12,7 @@ from google.adk.tools import google_search
 from google.genai import types
 
 
-MAXIMA_MODEL = os.getenv("MAXIMA_MODEL", "gemini-3-flash-preview")
+MAXIMA_MODEL = os.getenv("MAXIMA_MODEL", "gemini-2.5-flash")
 
 root_agent = Agent(
     name="maxima_cloudrun",

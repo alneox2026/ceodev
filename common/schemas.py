@@ -25,7 +25,7 @@ class AgentConfig(BaseModel):
     base_url: str | None = None
     app_name: str | None = None
     audience: str | None = None
-    runtime_session_cleanup: Literal["agent_runtime", "none"] | None = None
+    runtime_session_cleanup: Literal["agent_runtime", "cloud_run_adk", "none"] | None = None
     streaming_enabled: bool = False
     persistence_enabled: bool = True
     auth_policy: str = "firebase"
@@ -58,7 +58,7 @@ class AgentConfig(BaseModel):
             raise ValueError("app_name is required for cloud_run_adk agents.")
         self.base_url = self.base_url.rstrip("/")
         if self.runtime_session_cleanup is None:
-            self.runtime_session_cleanup = "none"
+            self.runtime_session_cleanup = "cloud_run_adk"
         return self
 
 
@@ -170,7 +170,10 @@ class ThreadDeleteRequestedEvent(BaseModel):
     agent_backend: Literal["agent_runtime", "cloud_run_adk"] = "agent_runtime"
     agent_region: str
     agent_resource_name: str | None = None
-    runtime_session_cleanup: Literal["agent_runtime", "none"] = "agent_runtime"
+    agent_base_url: str | None = None
+    agent_app_name: str | None = None
+    agent_audience: str | None = None
+    runtime_session_cleanup: Literal["agent_runtime", "cloud_run_adk", "none"] = "agent_runtime"
     user_id: str
     thread_id: str
     session_id: str
@@ -198,3 +201,23 @@ class ThreadDeleteRequestedEvent(BaseModel):
         if validated is None:
             raise ValueError("session_id is required.")
         return validated
+
+    @field_validator("agent_base_url", "agent_app_name", "agent_audience")
+    @classmethod
+    def normalize_optional_delete_string(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def validate_cleanup_config(self) -> "ThreadDeleteRequestedEvent":
+        if self.runtime_session_cleanup == "agent_runtime" and not self.agent_resource_name:
+            raise ValueError("agent_resource_name is required for Agent Runtime cleanup.")
+        if self.runtime_session_cleanup == "cloud_run_adk":
+            if not self.agent_base_url:
+                raise ValueError("agent_base_url is required for Cloud Run ADK cleanup.")
+            if not self.agent_app_name:
+                raise ValueError("agent_app_name is required for Cloud Run ADK cleanup.")
+            self.agent_base_url = self.agent_base_url.rstrip("/")
+        return self

@@ -14,6 +14,9 @@ from services.agent_persistence_worker.app.core.logging import configure_logging
 from services.agent_persistence_worker.app.services.agent_runtime_sessions import (
     close_agent_runtime_sessions_client,
 )
+from services.agent_persistence_worker.app.services.cloud_run_adk_sessions import (
+    close_cloud_run_adk_sessions_client,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -38,6 +41,7 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         await close_agent_runtime_sessions_client()
+        await close_cloud_run_adk_sessions_client()
         LOGGER.info(
             "agent_persistence_worker_shutdown",
             extra={"payload": {"event": "agent_persistence_worker_shutdown"}},

@@ -16,4 +16,4 @@ agents:
     streaming_enabled: false
     persistence_enabled: true
     auth_policy: firebase
-    runtime_session_cleanup: none
+    runtime_session_cleanup: cloud_run_adk

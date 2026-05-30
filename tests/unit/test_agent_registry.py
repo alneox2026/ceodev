@@ -24,7 +24,7 @@ def test_get_agent_config_returns_cloud_run_canary() -> None:
     assert agent_config.agent_id == "maxima_cloudrun"
     assert agent_config.backend == "cloud_run_adk"
     assert agent_config.app_name == "app"
-    assert agent_config.runtime_session_cleanup == "none"
+    assert agent_config.runtime_session_cleanup == "cloud_run_adk"
 
 
 def test_get_agent_config_rejects_unknown_agent() -> None:
