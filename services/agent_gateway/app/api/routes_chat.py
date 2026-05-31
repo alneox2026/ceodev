@@ -7,8 +7,10 @@ import logging
 
 from fastapi import APIRouter, Request
 
+from common.diagnostics import sanitize_for_diagnostics
 from common.schemas import ChatRequest, ChatResponse
 from services.agent_gateway.app.core.auth import authenticate_request
+from services.agent_gateway.app.core.errors import ApiError
 from services.agent_gateway.app.core.logging import log_structured
 from services.agent_gateway.app.services.agent_registry import get_agent_config
 from services.agent_gateway.app.services.chat_backend_resolver import get_chat_backend_client
@@ -43,17 +45,58 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
         agent_id=agent_config.agent_id,
         user_id=user_id,
     )
+    backend_started_at = datetime.now(timezone.utc)
     session_result = await session_service.resolve(
         runtime_client=backend_client,
         agent_config=agent_config,
         user_id=user_id,
         request=payload,
     )
-    agent_response = await backend_client.chat_buffered_query(
-        agent_config=agent_config,
-        user_id=user_id,
+    try:
+        agent_response = await backend_client.chat_buffered_query(
+            agent_config=agent_config,
+            user_id=user_id,
+            session_id=session_result.session_id,
+            message=payload.message,
+        )
+    except ApiError as exc:
+        backend_latency_ms = int(
+            (datetime.now(timezone.utc) - backend_started_at).total_seconds() * 1000
+        )
+        log_structured(
+            LOGGER,
+            logging.WARNING,
+            "gateway_backend_call_failed",
+            request_id=request_context.request_id,
+            turn_id=request_context.turn_id,
+            agent_id=agent_config.agent_id,
+            backend=agent_config.backend,
+            thread_id=session_result.thread_id,
+            session_id=session_result.session_id,
+            session_created=session_result.created_new,
+            latency_ms=backend_latency_ms,
+            error_code=exc.code,
+            error_status_code=exc.status_code,
+            error_details=sanitize_for_diagnostics(exc.details),
+        )
+        raise
+    backend_latency_ms = int(
+        (datetime.now(timezone.utc) - backend_started_at).total_seconds() * 1000
+    )
+    log_structured(
+        LOGGER,
+        logging.INFO,
+        "gateway_backend_call_completed",
+        request_id=request_context.request_id,
+        turn_id=request_context.turn_id,
+        agent_id=agent_config.agent_id,
+        backend=agent_config.backend,
+        thread_id=session_result.thread_id,
         session_id=session_result.session_id,
-        message=payload.message,
+        session_created=session_result.created_new,
+        latency_ms=backend_latency_ms,
+        response_event_count=len(agent_response.raw_events),
+        reply_text_length=len(agent_response.reply_text),
     )
     usage = {}
     for event in agent_response.raw_events:
