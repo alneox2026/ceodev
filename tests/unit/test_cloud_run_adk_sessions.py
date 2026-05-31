@@ -80,3 +80,34 @@ def test_delete_session_non_success_is_retryable(monkeypatch) -> None:
 
     with pytest.raises(RetryableWorkerError):
         asyncio.run(client.delete_session(_event()))
+
+
+def test_delete_session_non_success_redacts_sensitive_body(monkeypatch) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            500,
+            json={
+                "detail": {
+                    "message": "secret user prompt",
+                    "text": "secret assistant response",
+                    "safe_reason": "delete failed",
+                }
+            },
+        )
+
+    monkeypatch.setattr(
+        "services.agent_persistence_worker.app.services.cloud_run_adk_sessions.id_token.fetch_id_token",
+        lambda request, audience: "identity-token",
+    )
+    client = CloudRunAdkSessionsClient(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(RetryableWorkerError) as exc_info:
+        asyncio.run(client.delete_session(_event()))
+
+    message = str(exc_info.value)
+    assert "delete failed" in message
+    assert "secret user prompt" not in message
+    assert "secret assistant response" not in message
+    assert "<redacted>" in message

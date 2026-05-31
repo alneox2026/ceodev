@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -13,9 +14,16 @@ import httpx
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2 import id_token
 
+from common.diagnostics import (
+    is_retryable_http_status,
+    safe_http_response_details,
+    safe_truncate,
+    safe_url_host,
+)
 from common.ids import new_session_id, new_thread_id
 from common.schemas import AgentConfig, ChatRequest
 from services.agent_gateway.app.core.errors import ApiError
+from services.agent_gateway.app.core.logging import log_structured
 from services.agent_gateway.app.services.agent_runtime_client import (
     BufferedAgentResponse,
     SessionResult,
@@ -23,6 +31,7 @@ from services.agent_gateway.app.services.agent_runtime_client import (
 from services.agent_gateway.app.services.turn_assembler import TurnAssembler
 
 
+LOGGER = logging.getLogger(__name__)
 _client_singleton: "CloudRunAdkClient | None" = None
 _client_lock = asyncio.Lock()
 
@@ -94,6 +103,8 @@ class CloudRunAdkClient:
         )
         response_payload = await self._post_run_sse(
             agent_config=agent_config,
+            user_id=user_id,
+            session_id=session_id,
             payload={
                 "app_name": self._app_name(agent_config),
                 "user_id": user_id,
@@ -111,8 +122,20 @@ class CloudRunAdkClient:
             assembler.add_event(event)
             for fragment in self._extract_text_fragments(event):
                 assembler.add_text(fragment)
+        reply_text = assembler.reply_text()
+        log_structured(
+            LOGGER,
+            logging.INFO,
+            "cloud_run_adk_buffered_response_assembled",
+            agent_id=agent_config.agent_id,
+            session_id=session_id,
+            app_name=self._app_name(agent_config),
+            base_url_host=safe_url_host(self._base_url(agent_config)),
+            response_event_count=len(raw_events),
+            reply_text_length=len(reply_text),
+        )
         return BufferedAgentResponse(
-            reply_text=assembler.reply_text(),
+            reply_text=reply_text,
             raw_events=raw_events,
         )
 
@@ -132,6 +155,9 @@ class CloudRunAdkClient:
             ),
             payload={},
             error_code="cloud_run_adk_session_error",
+            operation="session_create",
+            user_id=user_id,
+            session_id=session_id,
             conflict_ok=True,
         )
 
@@ -139,30 +165,100 @@ class CloudRunAdkClient:
         self,
         *,
         agent_config: AgentConfig,
+        user_id: str,
+        session_id: str,
         payload: dict[str, Any],
     ) -> dict[str, Any]:
         headers = await self._authorized_headers(agent_config)
+        operation = "run_sse"
+        started_at = time.monotonic()
+        url = f"{self._base_url(agent_config)}/run_sse"
         try:
             response = await self._http_client.post(
-                f"{self._base_url(agent_config)}/run_sse",
+                url,
                 headers=headers,
                 json=payload,
             )
         except httpx.ConnectTimeout as exc:
-            raise self._timeout_error("cloud_run_adk_connect_timeout", "connect", exc) from exc
+            raise self._timeout_error(
+                "cloud_run_adk_connect_timeout",
+                "connect",
+                exc,
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            ) from exc
         except httpx.ReadTimeout as exc:
-            raise self._timeout_error("cloud_run_adk_read_timeout", "read", exc) from exc
+            raise self._timeout_error(
+                "cloud_run_adk_read_timeout",
+                "read",
+                exc,
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            ) from exc
         except httpx.RequestError as exc:
+            self._log_transport_error(
+                agent_config=agent_config,
+                operation=operation,
+                exc=exc,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
             raise ApiError(
                 502,
                 "cloud_run_adk_unreachable",
                 "The gateway could not reach the Cloud Run ADK agent.",
-                {"reason": str(exc)},
+                self._diagnostic_context(
+                    agent_config=agent_config,
+                    operation=operation,
+                    started_at=started_at,
+                    user_id=user_id,
+                    session_id=session_id,
+                    extra={"reason": safe_truncate(exc)},
+                ),
             ) from exc
 
         if response.status_code >= 400:
-            raise self._response_error(response, "cloud_run_adk_error")
-        return self._decode_run_response(response)
+            raise self._response_error(
+                response,
+                "cloud_run_adk_error",
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
+        log_structured(
+            LOGGER,
+            logging.INFO,
+            "cloud_run_adk_request_completed",
+            **self._diagnostic_context(
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+                extra={
+                    "status_code": response.status_code,
+                    "content_type": response.headers.get("content-type", ""),
+                    "response_body_length": len(response.text or ""),
+                },
+            ),
+        )
+        return self._decode_run_response(
+            response,
+            agent_config=agent_config,
+            operation=operation,
+            started_at=started_at,
+            user_id=user_id,
+            session_id=session_id,
+        )
 
     async def _post_json(
         self,
@@ -171,55 +267,168 @@ class CloudRunAdkClient:
         path: str,
         payload: dict[str, Any],
         error_code: str,
+        operation: str,
+        user_id: str,
+        session_id: str,
         conflict_ok: bool = False,
     ) -> dict[str, Any]:
         headers = await self._authorized_headers(agent_config)
+        started_at = time.monotonic()
+        url = f"{self._base_url(agent_config)}{path}"
         try:
             response = await self._http_client.post(
-                f"{self._base_url(agent_config)}{path}",
+                url,
                 headers=headers,
                 json=payload,
             )
         except httpx.ConnectTimeout as exc:
-            raise self._timeout_error("cloud_run_adk_connect_timeout", "connect", exc) from exc
+            raise self._timeout_error(
+                "cloud_run_adk_connect_timeout",
+                "connect",
+                exc,
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            ) from exc
         except httpx.ReadTimeout as exc:
-            raise self._timeout_error("cloud_run_adk_read_timeout", "read", exc) from exc
+            raise self._timeout_error(
+                "cloud_run_adk_read_timeout",
+                "read",
+                exc,
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            ) from exc
         except httpx.RequestError as exc:
+            self._log_transport_error(
+                agent_config=agent_config,
+                operation=operation,
+                exc=exc,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
             raise ApiError(
                 502,
                 "cloud_run_adk_unreachable",
                 "The gateway could not reach the Cloud Run ADK agent.",
-                {"reason": str(exc)},
+                self._diagnostic_context(
+                    agent_config=agent_config,
+                    operation=operation,
+                    started_at=started_at,
+                    user_id=user_id,
+                    session_id=session_id,
+                    extra={"reason": safe_truncate(exc)},
+                ),
             ) from exc
 
         if conflict_ok and response.status_code == 409:
+            log_structured(
+                LOGGER,
+                logging.INFO,
+                "cloud_run_adk_session_already_exists",
+                **self._diagnostic_context(
+                    agent_config=agent_config,
+                    operation=operation,
+                    started_at=started_at,
+                    user_id=user_id,
+                    session_id=session_id,
+                    extra={"status_code": response.status_code},
+                ),
+            )
             return {}
         if response.status_code >= 400:
-            raise self._response_error(response, error_code)
+            raise self._response_error(
+                response,
+                error_code,
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
+        log_structured(
+            LOGGER,
+            logging.INFO,
+            "cloud_run_adk_request_completed",
+            **self._diagnostic_context(
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+                extra={
+                    "status_code": response.status_code,
+                    "content_type": response.headers.get("content-type", ""),
+                    "response_body_length": len(response.text or ""),
+                },
+            ),
+        )
         if not response.content:
             return {}
         try:
             return response.json()
         except ValueError as exc:
+            details = self._invalid_json_details(
+                response,
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            log_structured(
+                LOGGER,
+                logging.WARNING,
+                "cloud_run_adk_invalid_json",
+                **details,
+            )
             raise ApiError(
                 502,
                 "invalid_cloud_run_adk_json",
                 "Cloud Run ADK returned invalid JSON.",
-                {"body": response.text},
+                details,
             ) from exc
 
-    def _decode_run_response(self, response: httpx.Response) -> dict[str, Any]:
+    def _decode_run_response(
+        self,
+        response: httpx.Response,
+        *,
+        agent_config: AgentConfig,
+        operation: str,
+        started_at: float,
+        user_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
         content_type = response.headers.get("content-type", "")
         if "text/event-stream" in content_type:
             return {"output": self._parse_sse_text(response.text)}
         try:
             parsed = response.json()
         except ValueError as exc:
+            details = self._invalid_json_details(
+                response,
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            log_structured(
+                LOGGER,
+                logging.WARNING,
+                "cloud_run_adk_invalid_json",
+                **details,
+            )
             raise ApiError(
                 502,
                 "invalid_cloud_run_adk_json",
                 "Cloud Run ADK returned invalid JSON.",
-                {"body": response.text},
+                details,
             ) from exc
         if isinstance(parsed, dict):
             return parsed
@@ -390,34 +599,148 @@ class CloudRunAdkClient:
         code: str,
         timeout_type: str,
         exc: Exception,
+        *,
+        agent_config: AgentConfig,
+        operation: str,
+        started_at: float,
+        user_id: str,
+        session_id: str,
     ) -> ApiError:
         timeout_seconds = (
             self.connect_timeout_seconds
             if timeout_type == "connect"
             else self.read_timeout_seconds
         )
+        details = self._diagnostic_context(
+            agent_config=agent_config,
+            operation=operation,
+            started_at=started_at,
+            user_id=user_id,
+            session_id=session_id,
+            extra={
+                "reason": safe_truncate(exc),
+                "timeout_seconds": timeout_seconds,
+                "timeout_type": timeout_type,
+                "retryable": True,
+            },
+        )
+        log_structured(
+            LOGGER,
+            logging.WARNING,
+            "cloud_run_adk_request_timeout",
+            **details,
+        )
         return ApiError(
             504,
             code,
             "The gateway timed out while calling the Cloud Run ADK agent.",
-            {
-                "reason": str(exc),
-                "timeout_seconds": timeout_seconds,
-                "timeout_type": timeout_type,
-            },
+            details,
         )
 
-    def _response_error(self, response: httpx.Response, code: str) -> ApiError:
-        try:
-            body = response.json()
-        except ValueError:
-            body = {"raw": response.text}
+    def _response_error(
+        self,
+        response: httpx.Response,
+        code: str,
+        *,
+        agent_config: AgentConfig,
+        operation: str,
+        started_at: float,
+        user_id: str,
+        session_id: str,
+    ) -> ApiError:
+        retryable = is_retryable_http_status(response.status_code)
+        details = self._diagnostic_context(
+            agent_config=agent_config,
+            operation=operation,
+            started_at=started_at,
+            user_id=user_id,
+            session_id=session_id,
+            extra={
+                **safe_http_response_details(response),
+                "retryable": retryable,
+            },
+        )
+        log_structured(
+            LOGGER,
+            logging.WARNING if retryable else logging.ERROR,
+            "cloud_run_adk_non_success_response",
+            **details,
+        )
         return ApiError(
             502,
             code,
             "Cloud Run ADK returned a non-success response.",
-            {"status_code": response.status_code, "body": body},
+            details,
         )
+
+    def _invalid_json_details(
+        self,
+        response: httpx.Response,
+        *,
+        agent_config: AgentConfig,
+        operation: str,
+        started_at: float,
+        user_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        return self._diagnostic_context(
+            agent_config=agent_config,
+            operation=operation,
+            started_at=started_at,
+            user_id=user_id,
+            session_id=session_id,
+            extra={
+                **safe_http_response_details(response),
+                "retryable": True,
+            },
+        )
+
+    def _log_transport_error(
+        self,
+        *,
+        agent_config: AgentConfig,
+        operation: str,
+        exc: Exception,
+        started_at: float,
+        user_id: str,
+        session_id: str,
+    ) -> None:
+        log_structured(
+            LOGGER,
+            logging.WARNING,
+            "cloud_run_adk_transport_error",
+            **self._diagnostic_context(
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+                extra={"reason": safe_truncate(exc), "retryable": True},
+            ),
+        )
+
+    def _diagnostic_context(
+        self,
+        *,
+        agent_config: AgentConfig,
+        operation: str,
+        started_at: float,
+        user_id: str,
+        session_id: str,
+        extra: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        context = {
+            "agent_id": agent_config.agent_id,
+            "operation": operation,
+            "app_name": self._app_name(agent_config),
+            "base_url_host": safe_url_host(self._base_url(agent_config)),
+            "user_id": user_id,
+            "session_id": session_id,
+            "upstream_elapsed_ms": int((time.monotonic() - started_at) * 1000),
+        }
+        if extra:
+            context.update(extra)
+        return context
 
 
 async def get_cloud_run_adk_client() -> CloudRunAdkClient:
