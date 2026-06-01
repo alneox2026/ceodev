@@ -154,6 +154,41 @@ def test_chat_buffered_query_treats_existing_session_as_idempotent() -> None:
     asyncio.run(_run())
 
 
+def test_chat_buffered_query_rejects_empty_model_reply() -> None:
+    async def _run() -> None:
+        sse_text = (
+            "data: {\"author\":\"maxima_cloudrun\",\"content\":{\"role\":\"model\",\"parts\":[]},"
+            "\"usage_metadata\":{\"total_token_count\":42}}\n\n"
+        )
+        http_client = _RecordingHttpClient(
+            responses=[
+                _FakeResponse(payload={}),
+                _FakeResponse(text=sse_text, content_type="text/event-stream"),
+            ]
+        )
+        client = CloudRunAdkClient(http_client=http_client)
+        client._authorized_headers = _fake_authorized_headers  # type: ignore[method-assign]
+
+        with pytest.raises(ApiError) as exc_info:
+            await client.chat_buffered_query(
+                agent_config=_agent_config(),
+                user_id="user-1",
+                session_id="session-1",
+                message="hello",
+            )
+
+        assert exc_info.value.status_code == 502
+        assert exc_info.value.code == "cloud_run_adk_empty_response"
+        assert exc_info.value.details["response_event_count"] == 1
+        assert exc_info.value.details["retryable"] is True
+        event_summary = exc_info.value.details["event_summaries"][0]
+        assert event_summary["author"] == "maxima_cloudrun"
+        assert event_summary["content_role"] == "model"
+        assert event_summary["content_parts_count"] == 0
+
+    asyncio.run(_run())
+
+
 def test_chat_buffered_query_maps_cloud_run_error() -> None:
     async def _run() -> None:
         http_client = _RecordingHttpClient(

@@ -34,6 +34,7 @@ from services.agent_gateway.app.services.turn_assembler import TurnAssembler
 LOGGER = logging.getLogger(__name__)
 _client_singleton: "CloudRunAdkClient | None" = None
 _client_lock = asyncio.Lock()
+EVENT_SUMMARY_LIMIT = 5
 
 
 @dataclass
@@ -134,6 +135,12 @@ class CloudRunAdkClient:
             response_event_count=len(raw_events),
             reply_text_length=len(reply_text),
         )
+        if not reply_text:
+            raise self._empty_response_error(
+                raw_events,
+                agent_config=agent_config,
+                session_id=session_id,
+            )
         return BufferedAgentResponse(
             reply_text=reply_text,
             raw_events=raw_events,
@@ -540,6 +547,72 @@ class CloudRunAdkClient:
                 seen.add(fragment)
                 deduped.append(fragment)
         return deduped
+
+    def _empty_response_error(
+        self,
+        raw_events: list[dict[str, Any]],
+        *,
+        agent_config: AgentConfig,
+        session_id: str,
+    ) -> ApiError:
+        details = {
+            "agent_id": agent_config.agent_id,
+            "operation": "run_sse",
+            "app_name": self._app_name(agent_config),
+            "base_url_host": safe_url_host(self._base_url(agent_config)),
+            "session_id": session_id,
+            "response_event_count": len(raw_events),
+            "event_summaries": self._event_summaries(raw_events),
+            "retryable": True,
+        }
+        log_structured(
+            LOGGER,
+            logging.WARNING,
+            "cloud_run_adk_empty_response",
+            **details,
+        )
+        return ApiError(
+            502,
+            "cloud_run_adk_empty_response",
+            "Cloud Run ADK completed without an assistant reply.",
+            details,
+        )
+
+    def _event_summaries(self, raw_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            self._event_summary(event)
+            for event in raw_events[:EVENT_SUMMARY_LIMIT]
+            if isinstance(event, dict)
+        ]
+
+    def _event_summary(self, event: dict[str, Any]) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            "keys": sorted(str(key) for key in event.keys())[:20],
+        }
+        for key in ("author", "role", "finishReason", "finish_reason", "partial"):
+            if key in event:
+                summary[key] = event.get(key)
+
+        content = event.get("content")
+        if isinstance(content, dict):
+            summary["content_keys"] = sorted(str(key) for key in content.keys())[:20]
+            if "role" in content:
+                summary["content_role"] = content.get("role")
+            parts = content.get("parts")
+            if isinstance(parts, list):
+                summary["content_parts_count"] = len(parts)
+                summary["content_part_keys"] = [
+                    sorted(str(key) for key in part.keys())[:20]
+                    for part in parts[:EVENT_SUMMARY_LIMIT]
+                    if isinstance(part, dict)
+                ]
+
+        usage_metadata = event.get("usage_metadata")
+        if isinstance(usage_metadata, dict):
+            summary["usage_metadata_keys"] = sorted(
+                str(key) for key in usage_metadata.keys()
+            )[:20]
+        return summary
 
     async def _authorized_headers(self, agent_config: AgentConfig) -> dict[str, str]:
         token = await self._id_token(agent_config)

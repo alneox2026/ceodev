@@ -97,16 +97,21 @@ def post_chat(
 
     latency_ms = int((time.perf_counter() - started) * 1000)
     error_body = body.get("error") if isinstance(body.get("error"), dict) else {}
+    reply_text = str(body.get("reply_text") or "")
+    ok = bool(body.get("ok") is True and status_code == 200 and reply_text.strip())
+    error_code = str(error_body.get("code") or "")
+    if body.get("ok") is True and status_code == 200 and not reply_text.strip():
+        error_code = "empty_reply_text"
     return RequestResult(
         index=index,
-        ok=bool(body.get("ok") is True and status_code == 200),
+        ok=ok,
         status_code=status_code,
         latency_ms=latency_ms,
         thread_id=str(body.get("thread_id") or ""),
         session_id=str(body.get("session_id") or ""),
         turn_id=str(body.get("turn_id") or ""),
-        reply_text_length=len(str(body.get("reply_text") or "")),
-        error_code=str(error_body.get("code") or ""),
+        reply_text_length=len(reply_text),
+        error_code=error_code,
         exception=exception,
     )
 
