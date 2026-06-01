@@ -35,6 +35,7 @@ LOGGER = logging.getLogger(__name__)
 _client_singleton: "CloudRunAdkClient | None" = None
 _client_lock = asyncio.Lock()
 EVENT_SUMMARY_LIMIT = 5
+RESOURCE_EXHAUSTED_TERMS = ("resource_exhausted", "resource exhausted", "quota")
 
 
 @dataclass
@@ -136,6 +137,14 @@ class CloudRunAdkClient:
             reply_text_length=len(reply_text),
         )
         if not reply_text:
+            error_event = self._find_error_event(raw_events)
+            if error_event is not None:
+                raise self._error_event_api_error(
+                    error_event,
+                    raw_events,
+                    agent_config=agent_config,
+                    session_id=session_id,
+                )
             raise self._empty_response_error(
                 raw_events,
                 agent_config=agent_config,
@@ -578,6 +587,101 @@ class CloudRunAdkClient:
             details,
         )
 
+    def _find_error_event(self, raw_events: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for event in raw_events:
+            if isinstance(event, dict) and "error" in event:
+                return event
+        return None
+
+    def _error_event_api_error(
+        self,
+        error_event: dict[str, Any],
+        raw_events: list[dict[str, Any]],
+        *,
+        agent_config: AgentConfig,
+        session_id: str,
+    ) -> ApiError:
+        error_payload = error_event.get("error")
+        upstream_status_code = self._error_status_code(error_payload)
+        upstream_status = self._error_status(error_payload)
+        safe_reason = self._error_reason(error_payload)
+        is_resource_exhausted = self._is_resource_exhausted_error(
+            upstream_status_code=upstream_status_code,
+            upstream_status=upstream_status,
+            safe_reason=safe_reason,
+        )
+        code = (
+            "cloud_run_adk_resource_exhausted"
+            if is_resource_exhausted
+            else "cloud_run_adk_error_event"
+        )
+        details = {
+            "agent_id": agent_config.agent_id,
+            "operation": "run_sse",
+            "app_name": self._app_name(agent_config),
+            "base_url_host": safe_url_host(self._base_url(agent_config)),
+            "session_id": session_id,
+            "response_event_count": len(raw_events),
+            "event_summaries": self._event_summaries(raw_events),
+            "upstream_status_code": upstream_status_code,
+            "upstream_error_status": upstream_status,
+            "safe_reason": safe_reason,
+            "retryable": True,
+        }
+        log_structured(
+            LOGGER,
+            logging.WARNING,
+            code,
+            **details,
+        )
+        return ApiError(
+            503 if is_resource_exhausted else 502,
+            code,
+            (
+                "The Cloud Run ADK agent is temporarily capacity limited."
+                if is_resource_exhausted
+                else "Cloud Run ADK returned an error event."
+            ),
+            details,
+        )
+
+    def _error_status_code(self, error_payload: Any) -> int | None:
+        if isinstance(error_payload, dict):
+            value = error_payload.get("code") or error_payload.get("status_code")
+            try:
+                return int(value) if value is not None else None
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _error_status(self, error_payload: Any) -> str | None:
+        if isinstance(error_payload, dict):
+            value = error_payload.get("status") or error_payload.get("statusText")
+            if value is not None:
+                return safe_truncate(value, limit=120)
+        return None
+
+    def _error_reason(self, error_payload: Any) -> str | None:
+        if isinstance(error_payload, dict):
+            value = error_payload.get("message") or error_payload.get("detail")
+            if value is not None:
+                return safe_truncate(value, limit=300)
+        if error_payload is not None:
+            return safe_truncate(error_payload, limit=300)
+        return None
+
+    def _is_resource_exhausted_error(
+        self,
+        *,
+        upstream_status_code: int | None,
+        upstream_status: str | None,
+        safe_reason: str | None,
+    ) -> bool:
+        if upstream_status_code == 429:
+            return True
+        text = f"{upstream_status or ''} {safe_reason or ''}".lower()
+        return any(term in text for term in RESOURCE_EXHAUSTED_TERMS)
+
     def _event_summaries(self, raw_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
             self._event_summary(event)
@@ -612,6 +716,16 @@ class CloudRunAdkClient:
             summary["usage_metadata_keys"] = sorted(
                 str(key) for key in usage_metadata.keys()
             )[:20]
+
+        error = event.get("error")
+        if isinstance(error, dict):
+            summary["error_keys"] = sorted(str(key) for key in error.keys())[:20]
+            summary["error_code"] = self._error_status_code(error)
+            summary["error_status"] = self._error_status(error)
+            summary["error_message_preview"] = self._error_reason(error)
+        elif error is not None:
+            summary["error_type"] = type(error).__name__
+            summary["error_message_preview"] = self._error_reason(error)
         return summary
 
     async def _authorized_headers(self, agent_config: AgentConfig) -> dict[str, str]:

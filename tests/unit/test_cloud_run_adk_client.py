@@ -189,6 +189,75 @@ def test_chat_buffered_query_rejects_empty_model_reply() -> None:
     asyncio.run(_run())
 
 
+def test_chat_buffered_query_maps_adk_resource_exhausted_event() -> None:
+    async def _run() -> None:
+        sse_text = (
+            "data: {\"error\":{\"code\":429,\"message\":\"Resource exhausted. "
+            "Please try again later.\",\"status\":\"RESOURCE_EXHAUSTED\"}}\n\n"
+        )
+        http_client = _RecordingHttpClient(
+            responses=[
+                _FakeResponse(payload={}),
+                _FakeResponse(text=sse_text, content_type="text/event-stream"),
+            ]
+        )
+        client = CloudRunAdkClient(http_client=http_client)
+        client._authorized_headers = _fake_authorized_headers  # type: ignore[method-assign]
+
+        with pytest.raises(ApiError) as exc_info:
+            await client.chat_buffered_query(
+                agent_config=_agent_config(),
+                user_id="user-1",
+                session_id="session-1",
+                message="hello",
+            )
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.code == "cloud_run_adk_resource_exhausted"
+        assert exc_info.value.details["retryable"] is True
+        assert exc_info.value.details["upstream_status_code"] == 429
+        assert exc_info.value.details["upstream_error_status"] == "RESOURCE_EXHAUSTED"
+        assert "Resource exhausted" in exc_info.value.details["safe_reason"]
+        event_summary = exc_info.value.details["event_summaries"][0]
+        assert event_summary["keys"] == ["error"]
+        assert event_summary["error_code"] == 429
+        assert event_summary["error_status"] == "RESOURCE_EXHAUSTED"
+
+    asyncio.run(_run())
+
+
+def test_chat_buffered_query_maps_generic_adk_error_event() -> None:
+    async def _run() -> None:
+        sse_text = (
+            "data: {\"error\":{\"code\":500,\"message\":\"internal ADK failure\","
+            "\"status\":\"INTERNAL\"}}\n\n"
+        )
+        http_client = _RecordingHttpClient(
+            responses=[
+                _FakeResponse(payload={}),
+                _FakeResponse(text=sse_text, content_type="text/event-stream"),
+            ]
+        )
+        client = CloudRunAdkClient(http_client=http_client)
+        client._authorized_headers = _fake_authorized_headers  # type: ignore[method-assign]
+
+        with pytest.raises(ApiError) as exc_info:
+            await client.chat_buffered_query(
+                agent_config=_agent_config(),
+                user_id="user-1",
+                session_id="session-1",
+                message="hello",
+            )
+
+        assert exc_info.value.status_code == 502
+        assert exc_info.value.code == "cloud_run_adk_error_event"
+        assert exc_info.value.details["retryable"] is True
+        assert exc_info.value.details["upstream_status_code"] == 500
+        assert exc_info.value.details["upstream_error_status"] == "INTERNAL"
+
+    asyncio.run(_run())
+
+
 def test_chat_buffered_query_maps_cloud_run_error() -> None:
     async def _run() -> None:
         http_client = _RecordingHttpClient(
