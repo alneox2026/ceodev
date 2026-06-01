@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import logging
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from services.agent_gateway.app.api.routes_chat import router as chat_router
+from services.agent_gateway.app.api.routes_chat import (
+    CHAT_ROUTE_DIAGNOSTICS_VERSION,
+    router as chat_router,
+)
 from services.agent_gateway.app.api.routes_health import router as health_router
 from services.agent_gateway.app.api.routes_stream import router as stream_router
 from services.agent_gateway.app.api.routes_threads import router as threads_router
@@ -35,6 +39,9 @@ async def lifespan(_: FastAPI):
                 "project_id": SETTINGS.project_id,
                 "region": SETTINGS.region,
                 "agent_registry_path": str(SETTINGS.agent_registry_path),
+                "build_sha": os.getenv("GATEWAY_BUILD_SHA", ""),
+                "image_tag": os.getenv("GATEWAY_IMAGE_TAG", ""),
+                "chat_route_diagnostics_version": CHAT_ROUTE_DIAGNOSTICS_VERSION,
             }
         },
     )

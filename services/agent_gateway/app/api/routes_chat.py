@@ -23,6 +23,7 @@ from services.agent_gateway.app.services.turn_event_builder import (
 
 
 LOGGER = logging.getLogger(__name__)
+CHAT_ROUTE_DIAGNOSTICS_VERSION = "chat-route-diagnostics-v3"
 router = APIRouter()
 
 
@@ -44,6 +45,7 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
         turn_id=request_context.turn_id,
         agent_id=agent_config.agent_id,
         user_id=user_id,
+        diagnostics_version=CHAT_ROUTE_DIAGNOSTICS_VERSION,
     )
     backend_started_at = datetime.now(timezone.utc)
     session_result = await session_service.resolve(
@@ -75,6 +77,7 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
             session_id=session_result.session_id,
             session_created=session_result.created_new,
             latency_ms=backend_latency_ms,
+            diagnostics_version=CHAT_ROUTE_DIAGNOSTICS_VERSION,
             error_code=exc.code,
             error_status_code=exc.status_code,
             error_details=sanitize_for_diagnostics(exc.details),
@@ -97,6 +100,7 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
         latency_ms=backend_latency_ms,
         response_event_count=len(agent_response.raw_events),
         reply_text_length=len(agent_response.reply_text),
+        diagnostics_version=CHAT_ROUTE_DIAGNOSTICS_VERSION,
     )
     usage = {}
     for event in agent_response.raw_events:
@@ -139,6 +143,7 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
         backend_latency_ms=backend_latency_ms,
         response_event_count=len(agent_response.raw_events),
         reply_text_length=len(agent_response.reply_text),
+        diagnostics_version=CHAT_ROUTE_DIAGNOSTICS_VERSION,
         pubsub_message_id=publish_result.message_id if publish_result else None,
         publish_latency_ms=publish_latency_ms,
         latency_ms=latency_ms,
