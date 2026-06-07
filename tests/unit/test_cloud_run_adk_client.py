@@ -91,7 +91,6 @@ def test_chat_buffered_query_posts_run_sse_and_parses_sse_events() -> None:
         )
         http_client = _RecordingHttpClient(
             responses=[
-                _FakeResponse(payload={}),
                 _FakeResponse(text=sse_text, content_type="text/event-stream"),
             ]
         )
@@ -107,8 +106,8 @@ def test_chat_buffered_query_posts_run_sse_and_parses_sse_events() -> None:
 
         assert response.reply_text == "hello world"
         assert len(response.raw_events) == 2
-        assert len(http_client.post_calls) == 2
-        run_call = http_client.post_calls[1]
+        assert len(http_client.post_calls) == 1
+        run_call = http_client.post_calls[0]
         assert str(run_call["url"]).endswith("/run_sse")
         assert run_call["json"] == {
             "app_name": "maxima_cloudrun",
@@ -124,17 +123,13 @@ def test_chat_buffered_query_posts_run_sse_and_parses_sse_events() -> None:
     asyncio.run(_run())
 
 
-def test_chat_buffered_query_treats_existing_session_as_idempotent() -> None:
+def test_chat_buffered_query_does_not_recreate_existing_session() -> None:
     async def _run() -> None:
         sse_text = (
             "data: {\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hello\"}]}}\n\n"
         )
         http_client = _RecordingHttpClient(
             responses=[
-                _FakeResponse(
-                    payload={"detail": "Session already exists: session-1"},
-                    status_code=409,
-                ),
                 _FakeResponse(text=sse_text, content_type="text/event-stream"),
             ]
         )
@@ -149,7 +144,8 @@ def test_chat_buffered_query_treats_existing_session_as_idempotent() -> None:
         )
 
         assert response.reply_text == "hello"
-        assert len(http_client.post_calls) == 2
+        assert len(http_client.post_calls) == 1
+        assert str(http_client.post_calls[0]["url"]).endswith("/run_sse")
 
     asyncio.run(_run())
 
@@ -162,7 +158,6 @@ def test_chat_buffered_query_rejects_empty_model_reply() -> None:
         )
         http_client = _RecordingHttpClient(
             responses=[
-                _FakeResponse(payload={}),
                 _FakeResponse(text=sse_text, content_type="text/event-stream"),
             ]
         )
@@ -197,7 +192,6 @@ def test_chat_buffered_query_maps_adk_resource_exhausted_event() -> None:
         )
         http_client = _RecordingHttpClient(
             responses=[
-                _FakeResponse(payload={}),
                 _FakeResponse(text=sse_text, content_type="text/event-stream"),
             ]
         )
@@ -234,7 +228,6 @@ def test_chat_buffered_query_maps_generic_adk_error_event() -> None:
         )
         http_client = _RecordingHttpClient(
             responses=[
-                _FakeResponse(payload={}),
                 _FakeResponse(text=sse_text, content_type="text/event-stream"),
             ]
         )
@@ -262,7 +255,6 @@ def test_chat_buffered_query_maps_cloud_run_error() -> None:
     async def _run() -> None:
         http_client = _RecordingHttpClient(
             responses=[
-                _FakeResponse(payload={}),
                 _FakeResponse(payload={"detail": "failed"}, status_code=500),
             ]
         )
@@ -287,7 +279,6 @@ def test_chat_buffered_query_redacts_sensitive_error_body_fields() -> None:
     async def _run() -> None:
         http_client = _RecordingHttpClient(
             responses=[
-                _FakeResponse(payload={}),
                 _FakeResponse(
                     payload={
                         "detail": {
@@ -351,7 +342,7 @@ def test_chat_buffered_query_maps_read_timeout() -> None:
         assert exc_info.value.status_code == 504
         assert exc_info.value.code == "cloud_run_adk_read_timeout"
         assert exc_info.value.details["timeout_seconds"] == 77
-        assert exc_info.value.details["operation"] == "session_create"
+        assert exc_info.value.details["operation"] == "run_sse"
         assert exc_info.value.details["session_id"] == "session-1"
 
     asyncio.run(_run())

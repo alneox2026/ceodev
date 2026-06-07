@@ -98,11 +98,6 @@ class CloudRunAdkClient:
         session_id: str,
         message: str,
     ) -> BufferedAgentResponse:
-        await self._create_or_update_session(
-            agent_config=agent_config,
-            user_id=user_id,
-            session_id=session_id,
-        )
         response_payload = await self._post_run_sse(
             agent_config=agent_config,
             user_id=user_id,
