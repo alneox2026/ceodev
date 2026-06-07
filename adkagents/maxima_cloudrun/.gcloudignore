@@ -4,5 +4,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
-deployment_metadata.json
+.adk/
 uv.lock
+deployment_metadata.json
