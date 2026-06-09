@@ -119,8 +119,28 @@ def _fake_get_streaming_agent_config(agent_id: str) -> AgentConfig:
     )
 
 
+def _fake_get_cloud_run_streaming_agent_config(agent_id: str) -> AgentConfig:
+    return AgentConfig(
+        agent_id=agent_id,
+        backend="cloud_run_adk",
+        base_url="https://maxima-cloudrun-stream.example.run.app",
+        app_name="app",
+        region="us-central1",
+        streaming_enabled=True,
+        runtime_session_cleanup="cloud_run_adk",
+    )
+
+
 def _enable_streaming_route(monkeypatch) -> None:
     monkeypatch.setattr(routes_stream, "get_agent_config", _fake_get_streaming_agent_config)
+
+
+def _enable_cloud_run_streaming_route(monkeypatch) -> None:
+    monkeypatch.setattr(
+        routes_stream,
+        "get_agent_config",
+        _fake_get_cloud_run_streaming_agent_config,
+    )
 
 
 def _make_runtime_client(
@@ -225,7 +245,11 @@ def test_stream_chat_rejects_when_streaming_disabled(monkeypatch) -> None:
 def test_stream_chat_returns_normalized_sse_contract(monkeypatch) -> None:
     monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
     _enable_streaming_route(monkeypatch)
-    monkeypatch.setattr(routes_stream, "get_agent_runtime_client", _fake_get_agent_runtime_client)
+    monkeypatch.setattr(
+        routes_stream,
+        "get_streaming_chat_backend_client",
+        lambda _agent_config: _fake_get_agent_runtime_client(),
+    )
     monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
     response = client.post("/v1/agents/maxima/chat/stream", json={"message": "hello"})
     assert response.status_code == 200
@@ -238,6 +262,78 @@ def test_stream_chat_returns_normalized_sse_contract(monkeypatch) -> None:
     assert "event: done" in response.text
     assert '"reply_text": "echo:hello"' in response.text
     assert '"pubsub_message_id": "msg-fake"' in response.text
+
+
+def test_stream_chat_cloud_run_backend_uses_streaming_resolver(monkeypatch) -> None:
+    resolved_agent_configs: list[AgentConfig] = []
+
+    async def _streaming_backend(agent_config):
+        resolved_agent_configs.append(agent_config)
+        return FakeAgentRuntimeClient(
+            upstream_events=[
+                UpstreamStreamEvent(
+                    event_name="message",
+                    payload={
+                        "content": {
+                            "role": "model",
+                            "parts": [{"text": "cloud stream"}],
+                        }
+                    },
+                )
+            ]
+        )
+
+    monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    _enable_cloud_run_streaming_route(monkeypatch)
+    monkeypatch.setattr(
+        routes_stream,
+        "get_streaming_chat_backend_client",
+        _streaming_backend,
+    )
+    monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
+
+    response = client.post(
+        "/v1/agents/maxima_cloudrun_stream/chat/stream",
+        json={"message": "hello"},
+    )
+
+    assert response.status_code == 200
+    assert 'data: {"text": "cloud stream"}' in response.text
+    assert '"reply_text": "cloud stream"' in response.text
+    assert resolved_agent_configs[0].agent_id == "maxima_cloudrun_stream"
+    assert resolved_agent_configs[0].backend == "cloud_run_adk"
+
+
+def test_stream_chat_cloud_run_stream_error_falls_back_before_token(monkeypatch) -> None:
+    stream_error = ApiError(
+        504,
+        "cloud_run_adk_stream_read_timeout",
+        "The gateway timed out while waiting for Cloud Run ADK stream data.",
+        {"timeout_type": "read", "timeout_seconds": 240},
+    )
+
+    monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
+    _enable_cloud_run_streaming_route(monkeypatch)
+    monkeypatch.setattr(
+        routes_stream,
+        "get_streaming_chat_backend_client",
+        lambda _agent_config: _make_runtime_client(
+            stream_error=stream_error,
+            fallback_reply_text="cloud buffered fallback",
+        )(),
+    )
+    monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
+
+    response = client.post(
+        "/v1/agents/maxima_cloudrun_stream/chat/stream",
+        json={"message": "hello"},
+    )
+
+    assert response.status_code == 200
+    assert "event: error" not in response.text
+    assert 'data: {"text": "cloud buffered fallback"}' in response.text
+    assert '"fallback": true' in response.text
+    assert '"fallback_from_code": "cloud_run_adk_stream_read_timeout"' in response.text
 
 
 def test_stream_chat_emits_status_while_waiting_for_upstream(monkeypatch) -> None:
@@ -258,11 +354,11 @@ def test_stream_chat_emits_status_while_waiting_for_upstream(monkeypatch) -> Non
     _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(
         routes_stream,
-        "get_agent_runtime_client",
-        _make_runtime_client(
+        "get_streaming_chat_backend_client",
+        lambda _agent_config: _make_runtime_client(
             upstream_events=upstream_events,
             delay_seconds=0.08,
-        ),
+        )(),
     )
     monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
 
@@ -296,11 +392,11 @@ def test_stream_chat_emits_status_error_and_done_on_upstream_read_timeout(monkey
     _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(
         routes_stream,
-        "get_agent_runtime_client",
-        _make_runtime_client(
+        "get_streaming_chat_backend_client",
+        lambda _agent_config: _make_runtime_client(
             stream_error=stream_error,
             fallback_error=RuntimeError("fallback unavailable"),
-        ),
+        )(),
     )
     monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
     monkeypatch.setattr(routes_stream, "log_structured", _capture_log)
@@ -345,11 +441,11 @@ def test_stream_chat_falls_back_to_buffered_before_any_token(monkeypatch) -> Non
     _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(
         routes_stream,
-        "get_agent_runtime_client",
-        _make_runtime_client(
+        "get_streaming_chat_backend_client",
+        lambda _agent_config: _make_runtime_client(
             stream_error=stream_error,
             fallback_reply_text="fallback response",
-        ),
+        )(),
     )
     monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
 
@@ -390,7 +486,11 @@ def test_stream_chat_does_not_fallback_after_token(monkeypatch) -> None:
 
     monkeypatch.setattr(routes_stream, "authenticate_request", _fake_authenticate_request)
     _enable_streaming_route(monkeypatch)
-    monkeypatch.setattr(routes_stream, "get_agent_runtime_client", _runtime_client)
+    monkeypatch.setattr(
+        routes_stream,
+        "get_streaming_chat_backend_client",
+        lambda _agent_config: _runtime_client(),
+    )
     monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
 
     response = client.post("/v1/agents/maxima/chat/stream", json={"message": "hello"})
@@ -432,8 +532,8 @@ def test_stream_chat_logs_fragment_counters_for_multiple_text_events(monkeypatch
     _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(
         routes_stream,
-        "get_agent_runtime_client",
-        _make_runtime_client(upstream_events=upstream_events),
+        "get_streaming_chat_backend_client",
+        lambda _agent_config: _make_runtime_client(upstream_events=upstream_events)(),
     )
     monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
     monkeypatch.setattr(routes_stream, "log_structured", _capture_log)
@@ -482,8 +582,8 @@ def test_stream_chat_emits_only_new_suffix_for_cumulative_partials(monkeypatch) 
     _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(
         routes_stream,
-        "get_agent_runtime_client",
-        _make_runtime_client(upstream_events=upstream_events),
+        "get_streaming_chat_backend_client",
+        lambda _agent_config: _make_runtime_client(upstream_events=upstream_events)(),
     )
     monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
 
@@ -522,8 +622,8 @@ def test_stream_chat_debug_log_captures_upstream_shape_without_text(monkeypatch)
     _enable_streaming_route(monkeypatch)
     monkeypatch.setattr(
         routes_stream,
-        "get_agent_runtime_client",
-        _make_runtime_client(upstream_events=upstream_events),
+        "get_streaming_chat_backend_client",
+        lambda _agent_config: _make_runtime_client(upstream_events=upstream_events)(),
     )
     monkeypatch.setattr(routes_stream, "get_pubsub_publisher", _fake_get_pubsub_publisher)
     monkeypatch.setattr(routes_stream, "log_structured", _capture_log)

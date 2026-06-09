@@ -19,10 +19,12 @@ from services.agent_gateway.app.core.errors import ApiError
 from services.agent_gateway.app.core.logging import log_structured
 from services.agent_gateway.app.services.agent_registry import get_agent_config
 from services.agent_gateway.app.services.agent_runtime_client import (
-    AgentRuntimeClient,
     BufferedAgentResponse,
     UpstreamStreamEvent,
-    get_agent_runtime_client,
+)
+from services.agent_gateway.app.services.chat_backend_resolver import (
+    StreamingChatBackendClient,
+    get_streaming_chat_backend_client,
 )
 from services.agent_gateway.app.services.chat_session_service import get_chat_session_service
 from services.agent_gateway.app.services.pubsub_publisher import get_pubsub_publisher
@@ -49,6 +51,10 @@ STREAM_FALLBACKABLE_CODES = {
     "agent_runtime_stream_read_timeout",
     "agent_runtime_stream_unreachable",
     "agent_runtime_stream_error",
+    "cloud_run_adk_stream_connect_timeout",
+    "cloud_run_adk_stream_read_timeout",
+    "cloud_run_adk_stream_unreachable",
+    "cloud_run_adk_stream_error",
 }
 
 
@@ -234,10 +240,10 @@ async def stream_chat(
             f"This gateway is configured for non-streaming chat. Use /v1/agents/{agent_config.agent_id}/chat.",
             {"agent_id": agent_config.agent_id},
         )
-    runtime_client = await get_agent_runtime_client()
+    backend_client = await get_streaming_chat_backend_client(agent_config)
     session_service = await get_chat_session_service()
     session_result = await session_service.resolve(
-        runtime_client=runtime_client,
+        runtime_client=backend_client,
         agent_config=agent_config,
         user_id=user_id,
         request=payload,
@@ -275,7 +281,7 @@ async def stream_chat(
         )
         try:
             async for upstream_event in _stream_upstream_events_with_heartbeats(
-                runtime_client=runtime_client,
+                backend_client=backend_client,
                 agent_config=agent_config,
                 user_id=user_id,
                 session_id=session_result.session_id,
@@ -292,7 +298,7 @@ async def stream_chat(
                     continue
 
                 assembler.add_event(upstream_event.payload)
-                fragments = runtime_client.extract_text_fragments(upstream_event.payload)
+                fragments = backend_client.extract_text_fragments(upstream_event.payload)
                 diagnostics.record_upstream_event(
                     event_name=upstream_event.event_name,
                     payload=upstream_event.payload,
@@ -371,7 +377,7 @@ async def stream_chat(
             ):
                 try:
                     fallback_response: BufferedAgentResponse = (
-                        await runtime_client.chat_buffered_query(
+                        await backend_client.chat_buffered_query(
                             agent_config=agent_config,
                             user_id=user_id,
                             session_id=session_result.session_id,
@@ -532,13 +538,13 @@ async def stream_chat(
 
 async def _stream_upstream_events(
     *,
-    runtime_client: AgentRuntimeClient,
+    backend_client: StreamingChatBackendClient,
     agent_config: AgentConfig,
     user_id: str,
     session_id: str,
     message: str,
 ) -> AsyncIterator[UpstreamStreamEvent]:
-    async for event in runtime_client.stream_chat_events(
+    async for event in backend_client.stream_chat_events(
         agent_config=agent_config,
         user_id=user_id,
         session_id=session_id,
@@ -549,14 +555,14 @@ async def _stream_upstream_events(
 
 async def _stream_upstream_events_with_heartbeats(
     *,
-    runtime_client: AgentRuntimeClient,
+    backend_client: StreamingChatBackendClient,
     agent_config: AgentConfig,
     user_id: str,
     session_id: str,
     message: str,
 ) -> AsyncIterator[UpstreamStreamEvent | None]:
     upstream = _stream_upstream_events(
-        runtime_client=runtime_client,
+        backend_client=backend_client,
         agent_config=agent_config,
         user_id=user_id,
         session_id=session_id,

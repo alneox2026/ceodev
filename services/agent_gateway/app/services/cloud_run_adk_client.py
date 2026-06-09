@@ -17,6 +17,7 @@ from google.oauth2 import id_token
 from common.diagnostics import (
     is_retryable_http_status,
     safe_http_response_details,
+    safe_response_body_details,
     safe_truncate,
     safe_url_host,
 )
@@ -27,6 +28,7 @@ from services.agent_gateway.app.core.logging import log_structured
 from services.agent_gateway.app.services.agent_runtime_client import (
     BufferedAgentResponse,
     SessionResult,
+    UpstreamStreamEvent,
 )
 from services.agent_gateway.app.services.turn_assembler import TurnAssembler
 
@@ -150,6 +152,112 @@ class CloudRunAdkClient:
             raw_events=raw_events,
         )
 
+    async def stream_chat_events(
+        self,
+        *,
+        agent_config: AgentConfig,
+        user_id: str,
+        session_id: str,
+        message: str,
+    ):
+        headers = await self._authorized_headers(agent_config)
+        operation = "run_sse_stream"
+        started_at = time.monotonic()
+        url = f"{self._base_url(agent_config)}/run_sse"
+        payload = {
+            "app_name": self._app_name(agent_config),
+            "user_id": user_id,
+            "session_id": session_id,
+            "new_message": {
+                "role": "user",
+                "parts": [{"text": message}],
+            },
+            "streaming": True,
+        }
+        try:
+            async with self._http_client.stream(
+                "POST",
+                url,
+                headers=headers,
+                json=payload,
+            ) as response:
+                if response.status_code >= 400:
+                    raise await self._stream_response_error(
+                        response,
+                        agent_config=agent_config,
+                        operation=operation,
+                        started_at=started_at,
+                        user_id=user_id,
+                        session_id=session_id,
+                    )
+                log_structured(
+                    LOGGER,
+                    logging.INFO,
+                    "cloud_run_adk_stream_opened",
+                    **self._diagnostic_context(
+                        agent_config=agent_config,
+                        operation=operation,
+                        started_at=started_at,
+                        user_id=user_id,
+                        session_id=session_id,
+                        extra={
+                            "status_code": response.status_code,
+                            "content_type": response.headers.get("content-type", ""),
+                        },
+                    ),
+                )
+                async for event_name, data in self._iter_sse_messages(response):
+                    if not data or data == "[DONE]":
+                        continue
+                    for parsed in self._parse_json_messages(data):
+                        yield UpstreamStreamEvent(event_name=event_name, payload=parsed)
+        except ApiError:
+            raise
+        except httpx.ConnectTimeout as exc:
+            raise self._timeout_error(
+                "cloud_run_adk_stream_connect_timeout",
+                "connect",
+                exc,
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            ) from exc
+        except httpx.ReadTimeout as exc:
+            raise self._timeout_error(
+                "cloud_run_adk_stream_read_timeout",
+                "read",
+                exc,
+                agent_config=agent_config,
+                operation=operation,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            ) from exc
+        except httpx.RequestError as exc:
+            self._log_transport_error(
+                agent_config=agent_config,
+                operation=operation,
+                exc=exc,
+                started_at=started_at,
+                user_id=user_id,
+                session_id=session_id,
+            )
+            raise ApiError(
+                502,
+                "cloud_run_adk_stream_unreachable",
+                "The gateway could not open a streaming connection to the Cloud Run ADK agent.",
+                self._diagnostic_context(
+                    agent_config=agent_config,
+                    operation=operation,
+                    started_at=started_at,
+                    user_id=user_id,
+                    session_id=session_id,
+                    extra={"reason": safe_truncate(exc), "retryable": True},
+                ),
+            ) from exc
+
     async def _create_or_update_session(
         self,
         *,
@@ -171,6 +279,9 @@ class CloudRunAdkClient:
             session_id=session_id,
             conflict_ok=True,
         )
+
+    def extract_text_fragments(self, event_payload: dict[str, Any]) -> list[str]:
+        return self._extract_text_fragments(event_payload)
 
     async def _post_run_sse(
         self,
@@ -483,6 +594,56 @@ class CloudRunAdkClient:
             events.append(parsed)
         elif isinstance(parsed, list):
             events.extend(item for item in parsed if isinstance(item, dict))
+
+    async def _iter_sse_messages(self, response: httpx.Response):
+        event_name: str | None = None
+        data_lines: list[str] = []
+
+        async for raw_line in response.aiter_lines():
+            if raw_line is None:
+                continue
+            line = raw_line.strip()
+            if not line:
+                if data_lines:
+                    yield event_name, "\n".join(data_lines)
+                    event_name = None
+                    data_lines = []
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("event:"):
+                event_name = line.partition(":")[2].strip() or None
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line.partition(":")[2].strip())
+                continue
+            data_lines.append(line)
+
+        if data_lines:
+            yield event_name, "\n".join(data_lines)
+
+    def _parse_json_messages(self, data: str) -> list[dict[str, Any]]:
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError:
+            parsed_messages: list[dict[str, Any]] = []
+            for line in data.splitlines():
+                stripped = line.strip()
+                if not stripped or stripped == "[DONE]":
+                    continue
+                try:
+                    parsed = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    parsed_messages.append(parsed)
+            return parsed_messages
+
+        if isinstance(parsed, dict):
+            return [parsed]
+        if isinstance(parsed, list):
+            return [item for item in parsed if isinstance(item, dict)]
+        return []
 
     def _extract_event_payloads(self, response_payload: dict[str, Any]) -> list[dict[str, Any]]:
         output = response_payload.get("output", response_payload)
@@ -852,6 +1013,58 @@ class CloudRunAdkClient:
             502,
             code,
             "Cloud Run ADK returned a non-success response.",
+            details,
+        )
+
+    async def _stream_response_error(
+        self,
+        response: httpx.Response,
+        *,
+        agent_config: AgentConfig,
+        operation: str,
+        started_at: float,
+        user_id: str,
+        session_id: str,
+    ) -> ApiError:
+        raw_body = await response.aread()
+        text = raw_body.decode("utf-8", errors="replace")
+        try:
+            parsed_body = json.loads(text)
+            body_details = safe_response_body_details(
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type", ""),
+                text=text,
+                parsed_body=parsed_body,
+            )
+        except json.JSONDecodeError:
+            parsed_body = None
+            body_details = safe_response_body_details(
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type", ""),
+                text=text,
+                parse_failed=True,
+            )
+        details = self._diagnostic_context(
+            agent_config=agent_config,
+            operation=operation,
+            started_at=started_at,
+            user_id=user_id,
+            session_id=session_id,
+            extra={
+                **body_details,
+                "retryable": is_retryable_http_status(response.status_code),
+            },
+        )
+        log_structured(
+            LOGGER,
+            logging.WARNING if details["retryable"] else logging.ERROR,
+            "cloud_run_adk_stream_non_success_response",
+            **details,
+        )
+        return ApiError(
+            502,
+            "cloud_run_adk_stream_error",
+            "Cloud Run ADK returned a non-success response for streaming.",
             details,
         )
 

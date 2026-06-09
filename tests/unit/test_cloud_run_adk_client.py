@@ -46,6 +46,49 @@ class _RecordingHttpClient:
         return None
 
 
+class _FakeStreamResponse:
+    def __init__(
+        self,
+        *,
+        lines: list[str] | None = None,
+        text: str = "",
+        status_code: int = 200,
+        content_type: str = "text/event-stream",
+    ) -> None:
+        self._lines = lines if lines is not None else text.splitlines()
+        self._text = text
+        self.status_code = status_code
+        self.headers = {"content-type": content_type}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            yield line
+
+    async def aread(self) -> bytes:
+        if self._text:
+            return self._text.encode("utf-8")
+        return "\n".join(self._lines).encode("utf-8")
+
+
+class _StreamingHttpClient(_RecordingHttpClient):
+    def __init__(self, stream_response: _FakeStreamResponse) -> None:
+        super().__init__()
+        self.stream_response = stream_response
+        self.stream_calls: list[dict[str, object]] = []
+
+    def stream(self, method: str, url: str, headers=None, json=None):
+        self.stream_calls.append(
+            {"method": method, "url": url, "headers": headers, "json": json}
+        )
+        return self.stream_response
+
+
 def _agent_config() -> AgentConfig:
     return AgentConfig(
         agent_id="maxima_cloudrun",
@@ -119,6 +162,131 @@ def test_chat_buffered_query_posts_run_sse_and_parses_sse_events() -> None:
             },
             "streaming": False,
         }
+
+    asyncio.run(_run())
+
+
+def test_stream_chat_events_posts_run_sse_streaming_true_and_yields_events() -> None:
+    async def _run() -> None:
+        stream_response = _FakeStreamResponse(
+            lines=[
+                "event: message_start",
+                'data: {"content":{"role":"model","parts":[{"text":"hello"}]}}',
+                "",
+                "event: message_delta",
+                'data: {"content":{"role":"model","parts":[{"text":" world"}]}}',
+                "",
+            ]
+        )
+        http_client = _StreamingHttpClient(stream_response)
+        client = CloudRunAdkClient(http_client=http_client)
+        client._authorized_headers = _fake_authorized_headers  # type: ignore[method-assign]
+
+        events = [
+            event
+            async for event in client.stream_chat_events(
+                agent_config=_agent_config(),
+                user_id="user-1",
+                session_id="session-1",
+                message="hello",
+            )
+        ]
+
+        assert [event.event_name for event in events] == [
+            "message_start",
+            "message_delta",
+        ]
+        assert [
+            client.extract_text_fragments(event.payload)[0] for event in events
+        ] == ["hello", " world"]
+        assert len(http_client.stream_calls) == 1
+        run_call = http_client.stream_calls[0]
+        assert run_call["method"] == "POST"
+        assert str(run_call["url"]).endswith("/run_sse")
+        assert run_call["json"] == {
+            "app_name": "maxima_cloudrun",
+            "user_id": "user-1",
+            "session_id": "session-1",
+            "new_message": {
+                "role": "user",
+                "parts": [{"text": "hello"}],
+            },
+            "streaming": True,
+        }
+
+    asyncio.run(_run())
+
+
+def test_stream_chat_events_maps_cloud_run_stream_error_response() -> None:
+    async def _run() -> None:
+        stream_response = _FakeStreamResponse(
+            text='{"detail":"upstream unavailable"}',
+            status_code=503,
+            content_type="application/json",
+        )
+        http_client = _StreamingHttpClient(stream_response)
+        client = CloudRunAdkClient(http_client=http_client)
+        client._authorized_headers = _fake_authorized_headers  # type: ignore[method-assign]
+
+        with pytest.raises(ApiError) as exc_info:
+            [
+                event
+                async for event in client.stream_chat_events(
+                    agent_config=_agent_config(),
+                    user_id="user-1",
+                    session_id="session-1",
+                    message="hello",
+                )
+            ]
+
+        assert exc_info.value.status_code == 502
+        assert exc_info.value.code == "cloud_run_adk_stream_error"
+        assert exc_info.value.details["retryable"] is True
+        assert exc_info.value.details["status_code"] == 503
+        assert "upstream unavailable" not in exc_info.value.details["body_excerpt"]
+
+    asyncio.run(_run())
+
+
+def test_stream_chat_events_maps_cloud_run_stream_read_timeout() -> None:
+    class _TimeoutStreamContext:
+        async def __aenter__(self):
+            request = httpx.Request(
+                "POST",
+                "https://maxima-cloudrun-canary.example.run.app/run_sse",
+            )
+            raise httpx.ReadTimeout("read timed out", request=request)
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    class _TimeoutStreamingHttpClient(_RecordingHttpClient):
+        def stream(self, method: str, url: str, headers=None, json=None):
+            return _TimeoutStreamContext()
+
+    async def _run() -> None:
+        client = CloudRunAdkClient(
+            read_timeout_seconds=77,
+            http_client=_TimeoutStreamingHttpClient(),  # type: ignore[arg-type]
+        )
+        client._authorized_headers = _fake_authorized_headers  # type: ignore[method-assign]
+
+        with pytest.raises(ApiError) as exc_info:
+            [
+                event
+                async for event in client.stream_chat_events(
+                    agent_config=_agent_config(),
+                    user_id="user-1",
+                    session_id="session-1",
+                    message="hello",
+                )
+            ]
+
+        assert exc_info.value.status_code == 504
+        assert exc_info.value.code == "cloud_run_adk_stream_read_timeout"
+        assert exc_info.value.details["timeout_seconds"] == 77
+        assert exc_info.value.details["operation"] == "run_sse_stream"
+        assert exc_info.value.details["session_id"] == "session-1"
 
     asyncio.run(_run())
 
