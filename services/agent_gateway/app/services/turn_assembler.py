@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from services.agent_gateway.app.services.usage_metadata import (
+    extract_usage_metadata,
+    normalize_usage_metadata,
+)
+
 
 @dataclass
 class TurnAssembler:
@@ -31,12 +36,12 @@ class TurnAssembler:
 
     def add_event(self, event: dict[str, Any]) -> None:
         self.raw_events.append(event)
-        usage = event.get("usage_metadata")
-        if isinstance(usage, dict):
-            self.usage = usage
+        usage = extract_usage_metadata(event)
+        if usage is not None:
+            self.usage = normalize_usage_metadata(usage)
 
     def set_usage(self, usage: dict[str, Any]) -> None:
-        self.usage = usage
+        self.usage = normalize_usage_metadata(usage)
 
     def reply_text(self) -> str:
         return "".join(self.text_fragments).strip()

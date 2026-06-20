@@ -130,7 +130,9 @@ def test_chat_buffered_query_posts_run_sse_and_parses_sse_events() -> None:
     async def _run() -> None:
         sse_text = (
             "data: {\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hello\"}]}}\n\n"
-            "data: {\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\" world\"}]}}\n\n"
+            "data: {\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\" world\"}]},"
+            "\"usage_metadata\":{\"prompt_token_count\":5,\"candidates_token_count\":2,"
+            "\"total_token_count\":7}}\n\n"
         )
         http_client = _RecordingHttpClient(
             responses=[
@@ -148,6 +150,11 @@ def test_chat_buffered_query_posts_run_sse_and_parses_sse_events() -> None:
         )
 
         assert response.reply_text == "hello world"
+        assert response.usage["billable_tokens"] == {
+            "input_text_image_video": 5,
+            "input_audio": 0,
+            "output_including_thinking": 2,
+        }
         assert len(response.raw_events) == 2
         assert len(http_client.post_calls) == 1
         run_call = http_client.post_calls[0]

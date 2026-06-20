@@ -384,11 +384,7 @@ async def stream_chat(
                             message=payload.message,
                         )
                     )
-                    fallback_usage = {}
-                    for event in fallback_response.raw_events:
-                        event_usage = event.get("usage_metadata")
-                        if isinstance(event_usage, dict):
-                            fallback_usage = event_usage
+                    fallback_usage = getattr(fallback_response, "usage", {}) or {}
                     publish_result, publish_latency_ms = await _publish_completed_turn(
                         agent_config=agent_config,
                         request_context=request_context,

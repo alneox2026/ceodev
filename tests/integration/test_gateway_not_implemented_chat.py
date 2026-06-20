@@ -69,9 +69,11 @@ class FakeAgentRuntimeClient:
                     "content": {
                         "role": "model",
                         "parts": [{"text": reply_text}],
-                    }
+                    },
+                    "usage_metadata": {"total_token_count": 12},
                 }
             ],
+            usage={"total_token_count": 12, "estimated_cost_usd": 0.00003},
         )
 
     async def stream_chat_events(self, *, agent_config, user_id, session_id, message):
@@ -180,6 +182,10 @@ def test_buffered_chat_returns_structured_success(monkeypatch) -> None:
     assert payload["thread_id"] == "thread-fake"
     assert payload["session_id"] == "session-fake"
     assert payload["reply_text"] == "echo:hello"
+    assert payload["usage"] == {
+        "total_token_count": 12,
+        "estimated_cost_usd": 0.00003,
+    }
     assert len(runtime_client.chat_calls) == 0
     assert len(runtime_client.stream_calls) == 0
     assert len(runtime_client.buffered_query_calls) == 1

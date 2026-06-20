@@ -150,6 +150,7 @@ class CloudRunAdkClient:
         return BufferedAgentResponse(
             reply_text=reply_text,
             raw_events=raw_events,
+            usage=assembler.usage,
         )
 
     async def stream_chat_events(

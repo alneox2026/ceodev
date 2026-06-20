@@ -111,6 +111,7 @@ class ChatResponse(BaseModel):
     session_id: str
     turn_id: str
     reply_text: str
+    usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class ThreadLifecycleRequest(BaseModel):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import google.auth
@@ -36,6 +36,7 @@ class SessionResult:
 class BufferedAgentResponse:
     reply_text: str
     raw_events: list[dict[str, Any]]
+    usage: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -146,6 +147,7 @@ class AgentRuntimeClient:
         return BufferedAgentResponse(
             reply_text=assembler.reply_text(),
             raw_events=raw_events,
+            usage=assembler.usage,
         )
 
     async def stream_chat_events(

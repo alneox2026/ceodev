@@ -321,7 +321,13 @@ def test_buffered_chat_requests_non_streaming_run_config() -> None:
                             "content": {
                                 "role": "model",
                                 "parts": [{"text": "echo:hello"}],
-                            }
+                            },
+                            "usage_metadata": {
+                                "prompt_token_count": 10,
+                                "candidates_token_count": 4,
+                                "thoughts_token_count": 2,
+                                "total_token_count": 16,
+                            },
                         },
                     ]
                 }
@@ -339,6 +345,12 @@ def test_buffered_chat_requests_non_streaming_run_config() -> None:
         )
 
         assert response.reply_text == "echo:hello"
+        assert response.usage["total_token_count"] == 16
+        assert response.usage["billable_tokens"] == {
+            "input_text_image_video": 10,
+            "input_audio": 0,
+            "output_including_thinking": 6,
+        }
         assert len(response.raw_events) == 2
         assert len(http_client.stream_calls) == 0
         assert len(http_client.post_calls) == 1

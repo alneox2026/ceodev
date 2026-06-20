@@ -102,11 +102,7 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
         reply_text_length=len(agent_response.reply_text),
         diagnostics_version=CHAT_ROUTE_DIAGNOSTICS_VERSION,
     )
-    usage = {}
-    for event in agent_response.raw_events:
-        event_usage = event.get("usage_metadata")
-        if isinstance(event_usage, dict):
-            usage = event_usage
+    usage = getattr(agent_response, "usage", {}) or {}
     publish_result = None
     publish_latency_ms = 0
     if agent_config.persistence_enabled:
@@ -155,4 +151,5 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
         session_id=session_result.session_id,
         turn_id=request_context.turn_id,
         reply_text=agent_response.reply_text,
+        usage=usage,
     )

@@ -32,9 +32,28 @@ Success response target shape:
   "thread_id": "thread-...",
   "session_id": "session-...",
   "turn_id": "turn-...",
-  "reply_text": "..."
+  "reply_text": "...",
+  "usage": {}
 }
 ```
+
+When the backend returns Gemini usage metadata, `usage` preserves the raw metadata and adds:
+
+- `token_counts`
+- `billable_tokens`
+- `pricing_model: "gemini-2.5-flash"`
+- `pricing_unit: "usd_per_1m_tokens"`
+- `pricing`
+- `estimated_cost_usd`
+- `estimated_cost_breakdown_usd`
+
+Pricing basis:
+
+- input text/image/video: `$0.30` per 1M tokens
+- input audio: `$1.00` per 1M tokens
+- output including thinking tokens: `$2.50` per 1M tokens
+
+If the backend only returns an unsplit `total_token_count`, the gateway preserves the count but does not emit cost fields.
 
 ## Streaming chat
 
