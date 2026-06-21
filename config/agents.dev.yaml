@@ -10,7 +10,7 @@ agents:
   maxima_agentruntime_streaming:
     agent_id: maxima_agentruntime_streaming
     backend: agent_runtime
-    resource_name: projects/ceo-dev123/locations/us-central1/reasoningEngines/5776927001067651072_placeholder
+    resource_name: projects/ceo-dev123/locations/us-central1/reasoningEngines/7105244799560581120
     region: us-central1
     streaming_enabled: true
     persistence_enabled: true
