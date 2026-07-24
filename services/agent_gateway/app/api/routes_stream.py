@@ -171,7 +171,7 @@ def _build_waiting_status_payload(
     started_at: datetime,
 ) -> dict[str, str | int]:
     return {
-        "phase": "waiting_for_agent_runtime",
+        "phase": "waiting_for_runtime",
         "elapsed_ms": _elapsed_ms(started_at),
         "request_id": request_id,
         "turn_id": turn_id,
