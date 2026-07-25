@@ -11,6 +11,9 @@ from services.agent_persistence_worker.app.core.errors import RetryableWorkerErr
 from services.agent_persistence_worker.app.services.firestore_client import (
     get_firestore_client,
 )
+from services.agent_persistence_worker.app.services.billing_ledger import (
+    BillingLedgerRepository,
+)
 from services.agent_persistence_worker.app.services.firestore_messages import (
     FirestoreMessagesRepository,
 )
@@ -32,11 +35,15 @@ class PersistTurnService:
     def __init__(
         self,
         idempotency_store: IdempotencyStore | None = None,
+        billing_ledger_repository: BillingLedgerRepository | None = None,
         threads_repository: FirestoreThreadsRepository | None = None,
         messages_repository: FirestoreMessagesRepository | None = None,
         firestore_client_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.idempotency_store = idempotency_store or IdempotencyStore()
+        self.billing_ledger_repository = (
+            billing_ledger_repository or BillingLedgerRepository()
+        )
         self.threads_repository = (
             threads_repository or FirestoreThreadsRepository()
         )
@@ -67,6 +74,7 @@ class PersistTurnService:
                 )
             batch = client.batch()
             self.idempotency_store.add_create_to_batch(batch, client, event)
+            self.billing_ledger_repository.add_create_to_batch(batch, client, event)
             self.threads_repository.add_upsert_to_batch(
                 batch,
                 client,

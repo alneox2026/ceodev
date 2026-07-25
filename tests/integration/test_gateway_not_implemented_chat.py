@@ -374,7 +374,7 @@ def test_stream_chat_emits_status_while_waiting_for_upstream(monkeypatch) -> Non
     assert response.text.count("event: status") >= 2
     assert response.text.index("event: metadata") < response.text.index("event: status")
     assert response.text.index("event: status") < response.text.index("event: token")
-    assert '"phase": "waiting_for_agent_runtime"' in response.text
+    assert '"phase": "waiting_for_runtime"' in response.text
     assert '"reply_text": "echo:hello"' in response.text
 
 

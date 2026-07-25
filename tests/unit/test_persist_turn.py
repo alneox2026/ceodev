@@ -34,6 +34,11 @@ class FakeIdempotencyStore:
         batch.actions.append(("idempotency", event.event_id))
 
 
+class FakeBillingLedgerRepository:
+    def add_create_to_batch(self, batch, client, event) -> None:
+        batch.actions.append(("billing_ledger", event.turn_id))
+
+
 class FakeThreadsRepository:
     def __init__(self, existing_thread=None, ignored_reason=None) -> None:
         self.existing_thread = existing_thread
@@ -71,6 +76,7 @@ def test_persist_turn_commits_batch_once() -> None:
     client = FakeClient()
     service = PersistTurnService(
         idempotency_store=FakeIdempotencyStore(),
+        billing_ledger_repository=FakeBillingLedgerRepository(),
         threads_repository=FakeThreadsRepository(),
         messages_repository=FakeMessagesRepository(),
         firestore_client_factory=lambda: client,
@@ -81,6 +87,7 @@ def test_persist_turn_commits_batch_once() -> None:
     assert result.persisted is True
     assert client.batch_instance.actions == [
         ("idempotency", "evt-1"),
+        ("billing_ledger", "turn-1"),
         ("thread", "thread-1"),
         ("messages", "turn-1"),
     ]
@@ -90,6 +97,7 @@ def test_persist_turn_treats_conflict_as_duplicate() -> None:
     client = FakeClient(raise_conflict=True)
     service = PersistTurnService(
         idempotency_store=FakeIdempotencyStore(),
+        billing_ledger_repository=FakeBillingLedgerRepository(),
         threads_repository=FakeThreadsRepository(),
         messages_repository=FakeMessagesRepository(),
         firestore_client_factory=lambda: client,
@@ -104,6 +112,7 @@ def test_persist_turn_records_idempotency_only_for_deleted_thread() -> None:
     client = FakeClient()
     service = PersistTurnService(
         idempotency_store=FakeIdempotencyStore(),
+        billing_ledger_repository=FakeBillingLedgerRepository(),
         threads_repository=FakeThreadsRepository(ignored_reason="thread_deleted"),
         messages_repository=FakeMessagesRepository(),
         firestore_client_factory=lambda: client,
