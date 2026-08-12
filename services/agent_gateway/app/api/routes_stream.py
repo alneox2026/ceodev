@@ -40,6 +40,9 @@ from services.agent_gateway.app.services.turn_event_builder import (
     build_turn_completed_event,
 )
 from services.agent_gateway.app.services.turn_assembler import TurnAssembler
+from services.agent_gateway.app.services.wallet_reservations import (
+    get_wallet_reservation_service,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -188,6 +191,7 @@ async def _publish_completed_turn(
     session_id: str,
     assistant_message: str,
     usage: dict,
+    billing_metadata: dict | None = None,
 ):
     publish_result = None
     publish_latency_ms = 0
@@ -202,6 +206,7 @@ async def _publish_completed_turn(
             session_id=session_id,
             assistant_message=assistant_message,
             usage=usage,
+            billing_metadata=billing_metadata,
         )
         publish_started_at = datetime.now(timezone.utc)
         publish_result = await publisher.publish_turn_completed(persistence_event)
@@ -224,6 +229,16 @@ async def stream_chat(
         client_turn_id=payload.client_turn_id,
     )
     user_id = await authenticate_request(request)
+    if (
+        getattr(settings, "billing_enforcement_enabled", False)
+        and not agent_config.persistence_enabled
+    ):
+        raise ApiError(
+            503,
+            "billing_persistence_required",
+            "This agent cannot be used while prepaid billing is enabled because settlement is unavailable.",
+            {"agent_id": agent_config.agent_id},
+        )
     if not agent_config.streaming_enabled:
         log_structured(
             LOGGER,
@@ -247,6 +262,16 @@ async def stream_chat(
         agent_config=agent_config,
         user_id=user_id,
         request=payload,
+    )
+    wallet_reservation_service = await get_wallet_reservation_service()
+    billing_reservation = await wallet_reservation_service.reserve(
+        user_id=user_id,
+        agent_id=agent_config.agent_id,
+        request_id=request_context.request_id,
+        turn_id=request_context.turn_id,
+    )
+    billing_metadata = (
+        billing_reservation.event_metadata() if billing_reservation else None
     )
     log_structured(
         LOGGER,
@@ -322,6 +347,7 @@ async def stream_chat(
                 session_id=session_result.session_id,
                 assistant_message=assembler.reply_text(),
                 usage=assembler.usage,
+                billing_metadata=billing_metadata,
             )
             latency_ms = int(
                 (
@@ -394,6 +420,7 @@ async def stream_chat(
                         session_id=session_result.session_id,
                         assistant_message=fallback_response.reply_text,
                         usage=fallback_usage,
+                        billing_metadata=billing_metadata,
                     )
                     latency_ms = _elapsed_ms(request_context.started_at)
                     log_structured(

@@ -7,6 +7,7 @@ from typing import Any
 
 
 MODEL_NAME = "gemini-2.5-flash"
+PRICING_VERSION = "gemini-2.5-flash-usd-on-demand-2026-08-11"
 USD_PER_1M_INPUT_TEXT_IMAGE_VIDEO = 0.30
 USD_PER_1M_INPUT_AUDIO = 1.00
 USD_PER_1M_OUTPUT = 2.50
@@ -76,6 +77,7 @@ def normalize_usage_metadata(usage_metadata: dict[str, Any]) -> dict[str, Any]:
         "output_including_thinking": output_tokens or 0,
     }
     usage["pricing_model"] = MODEL_NAME
+    usage["pricing_version"] = PRICING_VERSION
     usage["pricing_unit"] = "usd_per_1m_tokens"
     usage["pricing"] = {
         "input_text_image_video": USD_PER_1M_INPUT_TEXT_IMAGE_VIDEO,

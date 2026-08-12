@@ -14,6 +14,12 @@ class WorkerSettings:
     messages_subcollection: str
     idempotency_collection: str
     billing_ledger_collection: str
+    wallets_collection: str
+    billing_reservations_collection: str
+    wallet_transactions_collection: str
+    customer_billing_periods_collection: str
+    monthly_service_fee_nanos: int
+    billing_reconciliation_batch_size: int
     runtime_delete_timeout_seconds: float
     log_level: str
     eventarc_auth_required: bool
@@ -40,6 +46,32 @@ def get_settings() -> WorkerSettings:
             "agent_billing_ledger",
         ).strip()
         or "agent_billing_ledger",
+        wallets_collection=os.getenv(
+            "FIRESTORE_CUSTOMER_WALLETS_COLLECTION",
+            "customer_wallets",
+        ).strip()
+        or "customer_wallets",
+        billing_reservations_collection=os.getenv(
+            "FIRESTORE_BILLING_RESERVATIONS_COLLECTION",
+            "billing_reservations",
+        ).strip()
+        or "billing_reservations",
+        wallet_transactions_collection=os.getenv(
+            "FIRESTORE_WALLET_TRANSACTIONS_COLLECTION",
+            "wallet_transactions",
+        ).strip()
+        or "wallet_transactions",
+        customer_billing_periods_collection=os.getenv(
+            "FIRESTORE_CUSTOMER_BILLING_PERIODS_COLLECTION",
+            "customer_billing_periods",
+        ).strip()
+        or "customer_billing_periods",
+        monthly_service_fee_nanos=int(
+            os.getenv("MONTHLY_SERVICE_FEE_NANOS", "5000000000")
+        ),
+        billing_reconciliation_batch_size=int(
+            os.getenv("BILLING_RECONCILIATION_BATCH_SIZE", "100")
+        ),
         runtime_delete_timeout_seconds=float(os.getenv("RUNTIME_DELETE_TIMEOUT_SECONDS", "30")),
         log_level=os.getenv("WORKER_LOG_LEVEL", "INFO").strip().upper() or "INFO",
         eventarc_auth_required=_parse_bool(

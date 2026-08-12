@@ -100,6 +100,22 @@ class FakePublisher:
         return SimpleNamespace(message_id="msg-fake")
 
 
+class FakeWalletReservationService:
+    def __init__(self):
+        self.calls: list[dict[str, object]] = []
+
+    async def reserve(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            event_metadata=lambda: {
+                "reservation_id": kwargs["turn_id"],
+                "billing_subject_id": kwargs["user_id"],
+                "reserved_amount_nanos": 500_000_000,
+                "currency": "USD",
+            }
+        )
+
+
 async def _fake_authenticate_request(request) -> str:
     return "user-test"
 
@@ -110,6 +126,13 @@ async def _fake_get_agent_runtime_client() -> FakeAgentRuntimeClient:
 
 async def _fake_get_pubsub_publisher() -> FakePublisher:
     return FakePublisher()
+
+
+def _fake_get_wallet_reservation_service(service):
+    async def _factory():
+        return service
+
+    return _factory
 
 
 def _fake_get_streaming_agent_config(agent_id: str) -> AgentConfig:
@@ -235,6 +258,41 @@ def test_buffered_chat_cloud_run_canary_returns_same_contract(monkeypatch) -> No
     assert len(published_events) == 1
     assert published_events[0].agent_id == "maxima_cloudrun"
     assert published_events[0].assistant_message == "cloud run reply"
+
+
+def test_buffered_chat_propagates_the_server_created_billing_reservation(monkeypatch) -> None:
+    runtime_client = FakeAgentRuntimeClient()
+    published_events = []
+    reservation_service = FakeWalletReservationService()
+
+    async def _backend_client(_agent_config):
+        return runtime_client
+
+    class CapturingPublisher:
+        async def publish_turn_completed(self, event):
+            published_events.append(event)
+            return SimpleNamespace(message_id="msg-billing")
+
+    async def _publisher():
+        return CapturingPublisher()
+
+    monkeypatch.setattr(routes_chat, "authenticate_request", _fake_authenticate_request)
+    monkeypatch.setattr(routes_chat, "get_chat_backend_client", _backend_client)
+    monkeypatch.setattr(routes_chat, "get_pubsub_publisher", _publisher)
+    monkeypatch.setattr(
+        routes_chat,
+        "get_wallet_reservation_service",
+        _fake_get_wallet_reservation_service(reservation_service),
+    )
+
+    response = client.post("/v1/agents/maxima/chat", json={"message": "hello"})
+
+    assert response.status_code == 200
+    assert len(reservation_service.calls) == 1
+    assert len(published_events) == 1
+    billing = published_events[0].metadata["billing"]
+    assert billing["reservation_id"] == published_events[0].turn_id
+    assert billing["billing_subject_id"] == "user-test"
 
 
 def test_stream_chat_rejects_when_streaming_disabled(monkeypatch) -> None:

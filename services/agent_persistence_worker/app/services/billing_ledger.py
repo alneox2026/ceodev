@@ -33,6 +33,9 @@ class BillingLedgerRepository:
 
     def _payload(self, event: TurnCompletedEvent) -> dict[str, Any]:
         usage = event.usage if isinstance(event.usage, dict) else {}
+        metadata = event.metadata if isinstance(event.metadata, dict) else {}
+        billing = metadata.get("billing")
+        billing_metadata = billing if isinstance(billing, dict) else {}
         cost_usd = self._estimated_cost_usd(usage)
         cost_usd_nanos = self._cost_usd_nanos(cost_usd)
 
@@ -41,6 +44,16 @@ class BillingLedgerRepository:
             "event_id": event.event_id,
             "turn_id": event.turn_id,
             "uid": event.user_id,
+            "billing_subject_id": self._optional_string(
+                billing_metadata.get("billing_subject_id")
+            )
+            or event.user_id,
+            "billing_reservation_id": self._optional_string(
+                billing_metadata.get("reservation_id")
+            ),
+            "billing_reservation_nanos": self._nonnegative_int(
+                billing_metadata.get("reserved_amount_nanos")
+            ),
             "agent_id": event.agent_id,
             "thread_id": event.thread_id,
             "session_id": event.session_id,
@@ -50,6 +63,7 @@ class BillingLedgerRepository:
             "estimated_cost_usd": cost_usd,
             "estimated_cost_usd_nanos": cost_usd_nanos,
             "pricing_model": self._optional_string(usage.get("pricing_model")),
+            "pricing_version": self._optional_string(usage.get("pricing_version")),
             "pricing_unit": self._optional_string(usage.get("pricing_unit")),
             "pricing": self._mapping(usage.get("pricing")),
             "billable_tokens": self._mapping(usage.get("billable_tokens")),
@@ -67,6 +81,12 @@ class BillingLedgerRepository:
             return None
         cleaned = str(value).strip()
         return cleaned or None
+
+    @staticmethod
+    def _nonnegative_int(value: Any) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        return value
 
     @staticmethod
     def _estimated_cost_usd(usage: dict[str, Any]) -> float | None:

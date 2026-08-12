@@ -17,6 +17,9 @@ from services.agent_persistence_worker.app.models.events import (
 )
 from services.agent_persistence_worker.app.models.pubsub import PubSubPushEnvelope
 from services.agent_persistence_worker.app.services.delete_thread import DeleteThreadService
+from services.agent_persistence_worker.app.services.billing_reconciliation import (
+    BillingReconciliationService,
+)
 from services.agent_persistence_worker.app.services.persist_turn import PersistTurnService
 
 
@@ -24,6 +27,7 @@ LOGGER = logging.getLogger(__name__)
 router = APIRouter()
 PERSIST_SERVICE = PersistTurnService()
 DELETE_THREAD_SERVICE = DeleteThreadService()
+BILLING_RECONCILIATION_SERVICE = BillingReconciliationService()
 
 
 @router.post("/events/pubsub")
@@ -49,6 +53,41 @@ async def receive_pubsub_event(
         status_code=400,
         detail=f"Unsupported event type: {event_type or 'missing'}",
     )
+
+
+@router.post("/internal/billing/reconcile")
+async def reconcile_expired_billing_reservations() -> dict[str, object]:
+    """Cloud Scheduler-only endpoint; Cloud Run IAM protects this route."""
+
+    try:
+        result = await BILLING_RECONCILIATION_SERVICE.reconcile_expired()
+    except RetryableWorkerError as exc:
+        log_structured(
+            LOGGER,
+            logging.ERROR,
+            "worker_billing_reconciliation_retryable_failure",
+            reason=str(exc),
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Retryable billing reconciliation failure: {exc}",
+        ) from exc
+    log_structured(
+        LOGGER,
+        logging.INFO,
+        "worker_billing_reconciliation_completed",
+        scanned_reservations=result.scanned_reservations,
+        settled_reservations=result.settled_reservations,
+        released_reservations=result.released_reservations,
+        skipped_reservations=result.skipped_reservations,
+    )
+    return {
+        "ok": True,
+        "scanned_reservations": result.scanned_reservations,
+        "settled_reservations": result.settled_reservations,
+        "released_reservations": result.released_reservations,
+        "skipped_reservations": result.skipped_reservations,
+    }
 
 
 async def _handle_turn_completed(decoded_payload: dict[str, object]) -> dict[str, object]:
@@ -90,6 +129,7 @@ async def _handle_turn_completed(decoded_payload: dict[str, object]) -> dict[str
             event_id=result.event_id,
             thread_id=result.thread_id,
             persisted=result.persisted,
+            billing_settlement_status=getattr(result, "billing_settlement_status", None),
             ignored_reason=result.ignored_reason,
         )
     else:
@@ -100,6 +140,7 @@ async def _handle_turn_completed(decoded_payload: dict[str, object]) -> dict[str
             event_id=result.event_id,
             thread_id=result.thread_id,
             persisted=result.persisted,
+            billing_settlement_status=getattr(result, "billing_settlement_status", None),
         )
     return {
         "ok": True,
@@ -107,6 +148,7 @@ async def _handle_turn_completed(decoded_payload: dict[str, object]) -> dict[str
         "thread_id": result.thread_id,
         "persisted": result.persisted,
         "ignored_reason": result.ignored_reason,
+        "billing_settlement_status": getattr(result, "billing_settlement_status", None),
     }
 
 

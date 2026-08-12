@@ -4,6 +4,7 @@ This runbook covers the first live deployment of the new middleware stack:
 
 - public Cloud Run gateway
 - authenticated Cloud Run persistence worker
+- public Stripe Billing API (Checkout and signed webhooks)
 - Pub/Sub topic for completed turn events
 - Eventarc trigger from Pub/Sub to the worker
 
@@ -22,6 +23,8 @@ docker build -f services/agent_gateway/Dockerfile -t us-central1-docker.pkg.dev/
 docker push us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-gateway:latest
 docker build -f services/agent_persistence_worker/Dockerfile -t us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-persistence-worker:latest .
 docker push us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-persistence-worker:latest
+docker build -f services/billing_api/Dockerfile -t us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-billing-api:latest .
+docker push us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-billing-api:latest
 ```
 
 ## 2. Prepare Terraform variables
@@ -35,6 +38,13 @@ Launch defaults for this repo:
 - second-generation execution environment for both Cloud Run services
 - gateway `min_instances = 1`
 - worker `min_instances = 0`
+- Billing API `min_instances = 0`, `max_instances = 50`, and concurrency `32`
+
+For the Billing API, the existing test Stripe Secret Manager secret must be
+named `stripe-secret-key` (or the matching Terraform variable must be changed)
+and the secret version must be pinned. Terraform manages only its runtime IAM
+binding; it never writes the Stripe secret value. Leave the webhook signing
+secret variables empty until the signed webhook route has been deployed.
 
 Optionally add `alert_notification_channels` if you already have Cloud Monitoring notification channel resource names configured.
 
@@ -67,7 +77,10 @@ Preferred path:
 .\scripts\deploy_infra.ps1 `
   -GatewayImage "us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-gateway:latest" `
   -WorkerImage "us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-persistence-worker:latest" `
-  -AllowedOrigins "https://ceoappdev.flutterflow.app"
+  -BillingApiImage "us-central1-docker.pkg.dev/ceo-dev123/ceosystem/ceoagent-billing-api:latest" `
+  -AllowedOrigins "https://ceoappdev.flutterflow.app" `
+  -BillingApiCheckoutSuccessUrl "https://ceoappdev.flutterflow.app/billing-complete?session_id={CHECKOUT_SESSION_ID}" `
+  -BillingApiCheckoutCancelUrl "https://ceoappdev.flutterflow.app/billing-cancelled"
 ```
 
 Manual equivalent from [infra/terraform](/c:/Users/Admin/Desktop/CEOsystem-dev3/infra/terraform):
@@ -82,6 +95,7 @@ This Terraform stack creates:
 
 - the gateway Cloud Run service
 - the worker Cloud Run service
+- the Billing API Cloud Run service and its separate runtime service account
 - service accounts with least-privilege runtime roles
 - the `agent-turn-events` Pub/Sub topic
 - the Eventarc trigger that invokes the worker on `/events/pubsub`
@@ -94,6 +108,7 @@ After apply, record the deterministic service URLs from Terraform outputs:
 
 - `gateway_url`
 - `worker_url`
+- `billing_api_url`
 
 Use `gateway_url` as the canonical FlutterFlow base URL.
 
@@ -147,6 +162,11 @@ Confirm all of the following:
 8. delete action returns `status = "deleted"` and worker logs show `worker_thread_delete_processed`
 9. Cloud Run Error Reporting remains empty for both services during the verification window
 
+If prepaid agent-token billing is enabled, also follow
+[billing-wallet-setup.md](billing-wallet-setup.md) before the FlutterFlow
+cutover. In particular, test a funded wallet, an insufficient wallet, and an
+expired reservation before turning on customer charging.
+
 Optional backend regression:
 
 - run a streaming smoke test and confirm `metadata`, `token`, and final `done`
@@ -175,7 +195,7 @@ Use the one-page runbook: [maxima-rollback-runbook.md](/c:/Users/Admin/Desktop/C
 
 ## 8. Script inventory
 
-- [build_images.ps1](/c:/Users/Admin/Desktop/CEOsystem-dev3/scripts/build_images.ps1): build and push both container images
+- [build_images.ps1](/c:/Users/Admin/Desktop/CEOsystem-dev3/scripts/build_images.ps1): build and push all three container images
 - [deploy_infra.ps1](/c:/Users/Admin/Desktop/CEOsystem-dev3/scripts/deploy_infra.ps1): write Terraform vars, run `init`, `plan`, and optionally `apply`
 - [rollout_maxima.ps1](/c:/Users/Admin/Desktop/CEOsystem-dev3/scripts/rollout_maxima.ps1): build, deploy, fetch the deterministic gateway URL, and run buffered smoke tests (streaming optional)
 - [smoke_gateway.ps1](/c:/Users/Admin/Desktop/CEOsystem-dev3/scripts/smoke_gateway.ps1): direct buffered or stream call against an existing gateway URL

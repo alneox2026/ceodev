@@ -14,6 +14,9 @@ from services.agent_persistence_worker.app.services.firestore_client import (
 from services.agent_persistence_worker.app.services.billing_ledger import (
     BillingLedgerRepository,
 )
+from services.agent_persistence_worker.app.services.billing_settlement import (
+    BillingSettlementService,
+)
 from services.agent_persistence_worker.app.services.firestore_messages import (
     FirestoreMessagesRepository,
 )
@@ -29,6 +32,7 @@ class PersistTurnResult:
     thread_id: str
     persisted: bool
     ignored_reason: str | None = None
+    billing_settlement_status: str | None = None
 
 
 class PersistTurnService:
@@ -36,6 +40,7 @@ class PersistTurnService:
         self,
         idempotency_store: IdempotencyStore | None = None,
         billing_ledger_repository: BillingLedgerRepository | None = None,
+        billing_settlement_service: BillingSettlementService | None = None,
         threads_repository: FirestoreThreadsRepository | None = None,
         messages_repository: FirestoreMessagesRepository | None = None,
         firestore_client_factory: Callable[[], Any] | None = None,
@@ -43,6 +48,9 @@ class PersistTurnService:
         self.idempotency_store = idempotency_store or IdempotencyStore()
         self.billing_ledger_repository = (
             billing_ledger_repository or BillingLedgerRepository()
+        )
+        self.billing_settlement_service = (
+            billing_settlement_service or BillingSettlementService()
         )
         self.threads_repository = (
             threads_repository or FirestoreThreadsRepository()
@@ -89,19 +97,28 @@ class PersistTurnService:
             batch.commit()
         except Exception as exc:
             if self._is_conflict_error(exc):
-                return PersistTurnResult(
-                    event_id=event.event_id,
-                    thread_id=event.thread_id,
-                    persisted=False,
-                )
+                persisted = False
+            else:
+                raise RetryableWorkerError(
+                    f"Failed to persist turn event {event.event_id}: {exc}"
+                ) from exc
+        else:
+            persisted = True
+
+        try:
+            settlement = self.billing_settlement_service.settle_if_required_sync(event)
+        except Exception as exc:
+            if isinstance(exc, RetryableWorkerError):
+                raise
             raise RetryableWorkerError(
-                f"Failed to persist turn event {event.event_id}: {exc}"
+                f"Failed to settle billing for turn {event.turn_id}: {exc}"
             ) from exc
 
         return PersistTurnResult(
             event_id=event.event_id,
             thread_id=event.thread_id,
-            persisted=True,
+            persisted=persisted,
+            billing_settlement_status=settlement.status if settlement else None,
         )
 
     def _persist_idempotency_only(

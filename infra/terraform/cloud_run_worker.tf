@@ -52,3 +52,10 @@ resource "google_cloud_run_v2_service_iam_member" "worker_eventarc_invoker" {
   role     = "roles/run.invoker"
   member   = "serviceAccount:${google_service_account.eventarc.email}"
 }
+
+resource "google_cloud_run_v2_service_iam_member" "worker_billing_reconciler_invoker" {
+  location = google_cloud_run_v2_service.worker.location
+  name     = google_cloud_run_v2_service.worker.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.billing_reconciler.email}"
+}

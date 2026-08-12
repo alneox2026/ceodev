@@ -38,6 +38,11 @@ class GatewaySettings:
     upstream_connect_timeout_seconds: float
     upstream_read_timeout_seconds: float
     stream_debug: bool
+    billing_enforcement_enabled: bool
+    wallets_collection: str
+    billing_reservations_collection: str
+    billing_reservation_nanos: int
+    billing_reservation_ttl_seconds: int
 
 
 @lru_cache(maxsize=1)
@@ -73,4 +78,24 @@ def get_settings() -> GatewaySettings:
         upstream_connect_timeout_seconds=float(os.getenv("UPSTREAM_CONNECT_TIMEOUT_SECONDS", "10")),
         upstream_read_timeout_seconds=float(os.getenv("UPSTREAM_READ_TIMEOUT_SECONDS", "60")),
         stream_debug=_parse_bool(os.getenv("GATEWAY_STREAM_DEBUG"), default=False),
+        billing_enforcement_enabled=_parse_bool(
+            os.getenv("BILLING_ENFORCEMENT_ENABLED"),
+            default=False,
+        ),
+        wallets_collection=os.getenv(
+            "FIRESTORE_CUSTOMER_WALLETS_COLLECTION",
+            "customer_wallets",
+        ).strip()
+        or "customer_wallets",
+        billing_reservations_collection=os.getenv(
+            "FIRESTORE_BILLING_RESERVATIONS_COLLECTION",
+            "billing_reservations",
+        ).strip()
+        or "billing_reservations",
+        billing_reservation_nanos=int(
+            os.getenv("BILLING_RESERVATION_NANOS", "500000000")
+        ),
+        billing_reservation_ttl_seconds=int(
+            os.getenv("BILLING_RESERVATION_TTL_SECONDS", "3600")
+        ),
     )

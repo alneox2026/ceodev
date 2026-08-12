@@ -25,6 +25,7 @@ $terraformDir = Join-Path $PSScriptRoot "..\\infra\\terraform"
 if ($SkipBuild) {
     $gatewayImage = "$Region-docker.pkg.dev/$ProjectId/$Repository/ceoagent-gateway`:$Tag"
     $workerImage = "$Region-docker.pkg.dev/$ProjectId/$Repository/ceoagent-persistence-worker`:$Tag"
+    $billingApiImage = "$Region-docker.pkg.dev/$ProjectId/$Repository/ceoagent-billing-api`:$Tag"
 }
 else {
     $buildResult = & $buildScript `
@@ -34,14 +35,17 @@ else {
         -Tag $Tag
     $gatewayImage = $buildResult.gateway_image
     $workerImage = $buildResult.worker_image
+    $billingApiImage = $buildResult.billing_api_image
 }
 
 & $deployScript `
     -GatewayImage $gatewayImage `
     -WorkerImage $workerImage `
+    -BillingApiImage $billingApiImage `
     -ProjectId $ProjectId `
     -Region $Region `
     -AllowedOrigins $AllowedOrigins `
+    -BillingApiAllowedOrigins $AllowedOrigins `
     -AlertNotificationChannels $AlertNotificationChannels `
     -PlanOnly:$SkipApply
 

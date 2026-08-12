@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request
 from common.diagnostics import sanitize_for_diagnostics
 from common.schemas import ChatRequest, ChatResponse
 from services.agent_gateway.app.core.auth import authenticate_request
+from services.agent_gateway.app.core.config import get_settings
 from services.agent_gateway.app.core.errors import ApiError
 from services.agent_gateway.app.core.logging import log_structured
 from services.agent_gateway.app.services.agent_registry import get_agent_config
@@ -19,6 +20,9 @@ from services.agent_gateway.app.services.pubsub_publisher import get_pubsub_publ
 from services.agent_gateway.app.services.request_context import build_request_context
 from services.agent_gateway.app.services.turn_event_builder import (
     build_turn_completed_event,
+)
+from services.agent_gateway.app.services.wallet_reservations import (
+    get_wallet_reservation_service,
 )
 
 
@@ -30,6 +34,16 @@ router = APIRouter()
 @router.post("/v1/agents/{agent_id}/chat")
 async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatResponse:
     agent_config = get_agent_config(agent_id)
+    if (
+        getattr(get_settings(), "billing_enforcement_enabled", False)
+        and not agent_config.persistence_enabled
+    ):
+        raise ApiError(
+            503,
+            "billing_persistence_required",
+            "This agent cannot be used while prepaid billing is enabled because settlement is unavailable.",
+            {"agent_id": agent_config.agent_id},
+        )
     request_context = build_request_context(
         agent_id=agent_config.agent_id,
         client_turn_id=payload.client_turn_id,
@@ -53,6 +67,13 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
         agent_config=agent_config,
         user_id=user_id,
         request=payload,
+    )
+    wallet_reservation_service = await get_wallet_reservation_service()
+    billing_reservation = await wallet_reservation_service.reserve(
+        user_id=user_id,
+        agent_id=agent_config.agent_id,
+        request_id=request_context.request_id,
+        turn_id=request_context.turn_id,
     )
     try:
         agent_response = await backend_client.chat_buffered_query(
@@ -116,6 +137,9 @@ async def chat(request: Request, agent_id: str, payload: ChatRequest) -> ChatRes
             session_id=session_result.session_id,
             assistant_message=agent_response.reply_text,
             usage=usage,
+            billing_metadata=(
+                billing_reservation.event_metadata() if billing_reservation else None
+            ),
         )
         publish_started_at = datetime.now(timezone.utc)
         publish_result = await publisher.publish_turn_completed(persistence_event)

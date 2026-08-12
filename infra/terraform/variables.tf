@@ -22,6 +22,12 @@ variable "worker_service_name" {
   default     = "ceoagent-persistence-worker"
 }
 
+variable "billing_api_service_name" {
+  description = "Cloud Run service name for the public Stripe Billing API."
+  type        = string
+  default     = "ceoagent-billing-api"
+}
+
 variable "gateway_image" {
   description = "Container image URI for the gateway service."
   type        = string
@@ -29,6 +35,11 @@ variable "gateway_image" {
 
 variable "worker_image" {
   description = "Container image URI for the persistence worker."
+  type        = string
+}
+
+variable "billing_api_image" {
+  description = "Container image URI for the Stripe Billing API."
   type        = string
 }
 
@@ -44,10 +55,22 @@ variable "worker_service_account_name" {
   default     = "ceoagent-worker-sa"
 }
 
+variable "billing_api_service_account_name" {
+  description = "Service account name for the Stripe Billing API."
+  type        = string
+  default     = "ceoagent-billing-api-sa"
+}
+
 variable "eventarc_service_account_name" {
   description = "Service account name for the Eventarc trigger."
   type        = string
   default     = "ceoagent-eventarc-sa"
+}
+
+variable "billing_reconciler_service_account_name" {
+  description = "Service account name for the Cloud Scheduler billing reconciler."
+  type        = string
+  default     = "ceoagent-billing-reconciler-sa"
 }
 
 variable "pubsub_topic_name" {
@@ -141,6 +164,203 @@ variable "firestore_idempotency_collection" {
   default     = "processed_events"
 }
 
+variable "firestore_billing_ledger_collection" {
+  description = "Top-level immutable Firestore collection for completed-turn billing ledgers."
+  type        = string
+  default     = "agent_billing_ledger"
+}
+
+variable "firestore_customer_wallets_collection" {
+  description = "Top-level Firestore collection for server-owned prepaid customer wallets."
+  type        = string
+  default     = "customer_wallets"
+}
+
+variable "firestore_billing_reservations_collection" {
+  description = "Top-level Firestore collection for per-turn prepaid-credit reservations."
+  type        = string
+  default     = "billing_reservations"
+}
+
+variable "firestore_wallet_transactions_collection" {
+  description = "Top-level immutable Firestore collection for customer wallet transactions."
+  type        = string
+  default     = "wallet_transactions"
+}
+
+variable "firestore_customer_billing_periods_collection" {
+  description = "Top-level Firestore collection for customer monthly billing aggregates."
+  type        = string
+  default     = "customer_billing_periods"
+}
+
+variable "firestore_customer_billing_accounts_collection" {
+  description = "Top-level private Firestore collection mapping billing subjects to Stripe customer and subscription state."
+  type        = string
+  default     = "customer_billing_accounts"
+}
+
+variable "firestore_stripe_webhook_events_collection" {
+  description = "Top-level private Firestore collection for immutable Stripe webhook event receipts."
+  type        = string
+  default     = "stripe_webhook_events"
+}
+
+variable "billing_api_stripe_secret_key_secret_id" {
+  description = "Existing Secret Manager secret ID containing the Stripe secret API key. The value is never managed by Terraform."
+  type        = string
+  default     = "stripe-secret-key"
+
+  validation {
+    condition     = trimspace(var.billing_api_stripe_secret_key_secret_id) != ""
+    error_message = "billing_api_stripe_secret_key_secret_id must not be empty."
+  }
+}
+
+variable "billing_api_stripe_secret_key_secret_version" {
+  description = "Pinned numeric version of the Stripe secret-key Secret Manager secret."
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = can(regex("^[1-9][0-9]*$", var.billing_api_stripe_secret_key_secret_version))
+    error_message = "billing_api_stripe_secret_key_secret_version must be a positive numeric Secret Manager version."
+  }
+}
+
+variable "billing_api_stripe_webhook_signing_secret_id" {
+  description = "Optional existing Secret Manager secret ID for the Stripe webhook signing secret. Leave empty until the webhook endpoint exists."
+  type        = string
+  default     = ""
+}
+
+variable "billing_api_stripe_webhook_signing_secret_version" {
+  description = "Pinned numeric version of the Stripe webhook-signing Secret Manager secret when configured."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.billing_api_stripe_webhook_signing_secret_id == "" && var.billing_api_stripe_webhook_signing_secret_version == ""
+    ) || can(regex("^[1-9][0-9]*$", var.billing_api_stripe_webhook_signing_secret_version))
+    error_message = "Set a positive numeric billing_api_stripe_webhook_signing_secret_version when configuring its secret ID."
+  }
+}
+
+variable "billing_api_allowed_origins" {
+  description = "Explicit browser origins allowed to call Firebase-authenticated Billing API endpoints."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for origin in var.billing_api_allowed_origins : trimspace(origin) != "*"
+    ])
+    error_message = "Wildcard billing API CORS origins are not allowed. Provide explicit web origins instead."
+  }
+}
+
+variable "billing_api_catalog_path" {
+  description = "Absolute container path to the server-owned Stripe pricing catalog."
+  type        = string
+  default     = "/app/config/billing.test.yaml"
+}
+
+variable "billing_api_checkout_success_url" {
+  description = "HTTPS return URL after Stripe Checkout. It must contain {CHECKOUT_SESSION_ID}. Leave empty until the FlutterFlow route exists."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = var.billing_api_checkout_success_url == "" || (
+      startswith(var.billing_api_checkout_success_url, "https://") &&
+      strcontains(var.billing_api_checkout_success_url, "{CHECKOUT_SESSION_ID}")
+    )
+    error_message = "billing_api_checkout_success_url must be HTTPS and include {CHECKOUT_SESSION_ID}, or be empty before Checkout is configured."
+  }
+}
+
+variable "billing_api_checkout_cancel_url" {
+  description = "HTTPS return URL when the user cancels Stripe Checkout. Leave empty until the FlutterFlow route exists."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.billing_api_checkout_cancel_url == "" || startswith(var.billing_api_checkout_cancel_url, "https://")
+    error_message = "billing_api_checkout_cancel_url must be HTTPS, or be empty before Checkout is configured."
+  }
+}
+
+variable "billing_api_checkout_session_ttl_seconds" {
+  description = "Lifetime for a server-created Stripe Checkout Session. Stripe requires at least 30 minutes."
+  type        = number
+  default     = 1800
+
+  validation {
+    condition     = var.billing_api_checkout_session_ttl_seconds >= 1800 && var.billing_api_checkout_session_ttl_seconds <= 86400
+    error_message = "billing_api_checkout_session_ttl_seconds must be between 1800 and 86400."
+  }
+}
+
+variable "billing_api_stripe_webhook_tolerance_seconds" {
+  description = "Maximum age accepted by Stripe signature verification. Keep Stripe's 300-second default unless there is an incident-approved reason to change it."
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.billing_api_stripe_webhook_tolerance_seconds >= 60 && var.billing_api_stripe_webhook_tolerance_seconds <= 900
+    error_message = "billing_api_stripe_webhook_tolerance_seconds must be between 60 and 900."
+  }
+}
+
+variable "billing_api_log_level" {
+  description = "Billing API application log level."
+  type        = string
+  default     = "INFO"
+}
+
+variable "billing_enforcement_enabled" {
+  description = "Whether the gateway must reserve prepaid credit before every agent request."
+  type        = bool
+  default     = false
+}
+
+variable "billing_reservation_nanos" {
+  description = "Conservative per-turn USD prepaid-credit hold in nanos; 500000000 is USD 0.50."
+  type        = number
+  default     = 500000000
+}
+
+variable "billing_reservation_ttl_seconds" {
+  description = "How long an unfinalized per-turn reservation remains held before reconciliation."
+  type        = number
+  default     = 3600
+}
+
+variable "monthly_service_fee_nanos" {
+  description = "Monthly service fee recorded for each customer billing period; 5000000000 is USD 5.00."
+  type        = number
+  default     = 5000000000
+}
+
+variable "billing_reconciliation_batch_size" {
+  description = "Maximum expired billing reservations processed by one scheduled reconciliation run."
+  type        = number
+  default     = 100
+}
+
+variable "billing_reconciliation_schedule" {
+  description = "UTC cron schedule for reconciling finalized or expired billing reservations."
+  type        = string
+  default     = "*/15 * * * *"
+}
+
+variable "billing_reconciliation_enabled" {
+  description = "Whether Terraform should schedule expired-reservation reconciliation on the worker service."
+  type        = bool
+  default     = false
+}
+
 variable "gateway_min_instances" {
   description = "Minimum number of gateway instances."
   type        = number
@@ -223,6 +443,48 @@ variable "worker_timeout" {
   description = "Worker request timeout."
   type        = string
   default     = "120s"
+}
+
+variable "billing_api_min_instances" {
+  description = "Minimum Billing API instances. Keep 0 in test; set 1 in production when cold-start latency is unacceptable."
+  type        = number
+  default     = 0
+}
+
+variable "billing_api_max_instances" {
+  description = "Maximum Billing API instances allowed to handle concurrent Checkout and webhook traffic."
+  type        = number
+  default     = 50
+}
+
+variable "billing_api_concurrency" {
+  description = "Maximum simultaneous Billing API requests per instance. Tune with a staged webhook and Checkout load test."
+  type        = number
+  default     = 32
+}
+
+variable "billing_api_cpu" {
+  description = "Billing API CPU limit."
+  type        = string
+  default     = "1"
+}
+
+variable "billing_api_memory" {
+  description = "Billing API memory limit."
+  type        = string
+  default     = "512Mi"
+}
+
+variable "billing_api_timeout" {
+  description = "Billing API request timeout; handlers must return a verified webhook result promptly."
+  type        = string
+  default     = "60s"
+}
+
+variable "billing_api_deletion_protection" {
+  description = "Whether Terraform must block deletion of the Billing API Cloud Run service. Enable for production."
+  type        = bool
+  default     = false
 }
 
 variable "worker_require_eventarc_auth" {

@@ -26,6 +26,7 @@ def build_turn_completed_event(
     session_id: str,
     assistant_message: str,
     usage: dict[str, Any] | None = None,
+    billing_metadata: dict[str, Any] | None = None,
 ) -> TurnCompletedEvent:
     metadata: dict[str, Any] = {
         "request_id": request_context.request_id,
@@ -34,6 +35,8 @@ def build_turn_completed_event(
         metadata["client_turn_id"] = payload.client_turn_id
     if payload.metadata:
         metadata["client_metadata"] = payload.metadata
+    if billing_metadata:
+        metadata["billing"] = dict(billing_metadata)
 
     return TurnCompletedEvent(
         event_id=new_event_id(),
