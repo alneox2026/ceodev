@@ -26,7 +26,7 @@ billing_api_checkout_cancel_url  = "https://ceoappdev.flutterflow.app/billing-ca
 # Test defaults favor cost efficiency. In production, set billing_api_min_instances
 # to 1 if a warm instance is required and enable deletion protection.
 billing_api_min_instances        = 0
-billing_api_max_instances        = 50
+billing_api_max_instances        = 20
 billing_api_concurrency          = 32
 billing_api_deletion_protection  = false
 

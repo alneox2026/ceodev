@@ -38,7 +38,7 @@ Launch defaults for this repo:
 - second-generation execution environment for both Cloud Run services
 - gateway `min_instances = 1`
 - worker `min_instances = 0`
-- Billing API `min_instances = 0`, `max_instances = 50`, and concurrency `32`
+- Billing API `min_instances = 0`, `max_instances = 20`, and concurrency `32`
 
 For the Billing API, the existing test Stripe Secret Manager secret must be
 named `stripe-secret-key` (or the matching Terraform variable must be changed)

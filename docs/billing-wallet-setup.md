@@ -183,10 +183,12 @@ will return `503` while this secret is intentionally absent; it will never
 accept an unsigned webhook as a fallback.
 
 The initial test-mode scaling defaults are one vCPU, 512 MiB memory,
-concurrency 32, `max_instances = 50`, and `min_instances = 0`. This supports
-horizontal scaling without idle test cost. Before production, run a staged
-Checkout/webhook load test and choose whether to set `billing_api_min_instances = 1`
-for a warm instance; also set `billing_api_deletion_protection = true`.
+concurrency 32, `max_instances = 20`, and `min_instances = 0`. This supports
+up to 640 concurrent requests without idle test cost and fits the current
+20-vCPU regional allocation quota. Before production, run a staged
+Checkout/webhook load test and choose whether to request a quota increase or
+raise `billing_api_max_instances`; also set `billing_api_min_instances = 1`
+for a warm instance and `billing_api_deletion_protection = true`.
 
 Build and publish the additional image with the existing helper:
 

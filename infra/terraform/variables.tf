@@ -452,9 +452,9 @@ variable "billing_api_min_instances" {
 }
 
 variable "billing_api_max_instances" {
-  description = "Maximum Billing API instances allowed to handle concurrent Checkout and webhook traffic."
+  description = "Maximum Billing API instances allowed to handle concurrent Checkout and webhook traffic. Keep the test default within the project's regional CPU allocation quota."
   type        = number
-  default     = 50
+  default     = 20
 }
 
 variable "billing_api_concurrency" {
