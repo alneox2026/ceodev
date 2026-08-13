@@ -45,7 +45,7 @@ class FakeTransaction:
         self.client = client
 
     def get(self, document_ref):
-        return FakeSnapshot(self.client.documents.get(document_ref.key))
+        yield FakeSnapshot(self.client.documents.get(document_ref.key))
 
     def create(self, document_ref, data):
         if document_ref.key in self.client.documents:

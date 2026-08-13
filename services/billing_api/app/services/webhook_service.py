@@ -21,7 +21,10 @@ from common.billing import (
 from services.billing_api.app.core.config import BillingApiSettings, get_settings
 from services.billing_api.app.core.errors import BillingApiError
 from services.billing_api.app.services.billing_catalog import BillingCatalog, get_billing_catalog
-from services.billing_api.app.services.firestore_client import get_firestore_client
+from services.billing_api.app.services.firestore_client import (
+    get_firestore_client,
+    get_transaction_document_snapshot,
+)
 from services.billing_api.app.services.firestore_records import (
     build_stripe_webhook_event_document,
 )
@@ -317,9 +320,9 @@ class StripeWebhookService:
         def operation(transaction: Any) -> WebhookResult:
             # Keep every read before the first write. Firestore retries this
             # function on concurrent changes, preserving financial correctness.
-            event_snapshot = transaction.get(event_ref)
-            account_snapshot = transaction.get(account_ref)
-            transaction_snapshot = transaction.get(transaction_ref)
+            event_snapshot = get_transaction_document_snapshot(transaction, event_ref)
+            account_snapshot = get_transaction_document_snapshot(transaction, account_ref)
+            transaction_snapshot = get_transaction_document_snapshot(transaction, transaction_ref)
             if event_snapshot.exists:
                 return WebhookResult(
                     stripe_event_id=fulfillment.stripe_event_id,
@@ -338,7 +341,7 @@ class StripeWebhookService:
             wallet_ref = client.collection(self._settings.wallets_collection).document(
                 customer_wallet_document_id(owner_uid)
             )
-            wallet_snapshot = transaction.get(wallet_ref)
+            wallet_snapshot = get_transaction_document_snapshot(transaction, wallet_ref)
 
             if transaction_snapshot.exists:
                 self._create_event_receipt(
@@ -530,9 +533,9 @@ class StripeWebhookService:
         processed_at = _as_utc(self._now_factory())
 
         def operation(transaction: Any) -> WebhookResult:
-            event_snapshot = transaction.get(event_ref)
-            account_snapshot = transaction.get(account_ref)
-            transaction_snapshot = transaction.get(transaction_ref)
+            event_snapshot = get_transaction_document_snapshot(transaction, event_ref)
+            account_snapshot = get_transaction_document_snapshot(transaction, account_ref)
+            transaction_snapshot = get_transaction_document_snapshot(transaction, transaction_ref)
             if event_snapshot.exists:
                 return WebhookResult(
                     stripe_event_id=fulfillment.stripe_event_id,
@@ -551,7 +554,7 @@ class StripeWebhookService:
             period_ref = client.collection(self._settings.customer_billing_periods_collection).document(
                 customer_billing_period_document_id(owner_uid, period_key)
             )
-            period_snapshot = transaction.get(period_ref)
+            period_snapshot = get_transaction_document_snapshot(transaction, period_ref)
             if transaction_snapshot.exists:
                 self._create_service_fee_event_receipt(
                     transaction=transaction,
@@ -739,8 +742,8 @@ class StripeWebhookService:
         processed_at = _as_utc(self._now_factory())
 
         def operation(transaction: Any) -> WebhookResult:
-            event_snapshot = transaction.get(event_ref)
-            account_snapshot = transaction.get(account_ref)
+            event_snapshot = get_transaction_document_snapshot(transaction, event_ref)
+            account_snapshot = get_transaction_document_snapshot(transaction, account_ref)
             if event_snapshot.exists:
                 return WebhookResult(
                     stripe_event_id=stripe_event_id,
@@ -812,7 +815,7 @@ class StripeWebhookService:
         processed_at = _as_utc(self._now_factory())
 
         def operation(transaction: Any) -> WebhookResult:
-            event_snapshot = transaction.get(event_ref)
+            event_snapshot = get_transaction_document_snapshot(transaction, event_ref)
             if event_snapshot.exists:
                 return WebhookResult(
                     stripe_event_id=stripe_event_id,

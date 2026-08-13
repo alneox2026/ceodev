@@ -18,7 +18,10 @@ from services.billing_api.app.services.billing_catalog import (
     TopupPackage,
     get_billing_catalog,
 )
-from services.billing_api.app.services.firestore_client import get_firestore_client
+from services.billing_api.app.services.firestore_client import (
+    get_firestore_client,
+    get_transaction_document_snapshot,
+)
 from services.billing_api.app.services.firestore_records import (
     build_initial_billing_account_document,
 )
@@ -188,7 +191,7 @@ class CheckoutService:
         )
 
         def operation(transaction: Any) -> CheckoutReservation:
-            account_snapshot = transaction.get(account_ref)
+            account_snapshot = get_transaction_document_snapshot(transaction, account_ref)
             account_exists = account_snapshot.exists
             account = account_snapshot.to_dict() or {}
             if account_exists:
@@ -303,7 +306,7 @@ class CheckoutService:
         )
 
         def operation(transaction: Any) -> str:
-            account_snapshot = transaction.get(account_ref)
+            account_snapshot = get_transaction_document_snapshot(transaction, account_ref)
             if not account_snapshot.exists:
                 raise RuntimeError("Billing account disappeared during Stripe Customer creation.")
             account = account_snapshot.to_dict() or {}
@@ -382,7 +385,7 @@ class CheckoutService:
         )
 
         def operation(transaction: Any) -> None:
-            account_snapshot = transaction.get(account_ref)
+            account_snapshot = get_transaction_document_snapshot(transaction, account_ref)
             if not account_snapshot.exists:
                 raise RuntimeError("Billing account disappeared during Checkout creation.")
             account = account_snapshot.to_dict() or {}

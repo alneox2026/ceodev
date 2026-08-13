@@ -55,7 +55,7 @@ class FakeTransaction:
     def get(self, document_ref):
         if self._wrote:
             raise AssertionError("Firestore transaction read occurred after a write")
-        return FakeSnapshot(self.client.documents.get(document_ref.key))
+        yield FakeSnapshot(self.client.documents.get(document_ref.key))
 
     def create(self, document_ref, data):
         self._wrote = True
